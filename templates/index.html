@@ -638,13 +638,15 @@
                 document.getElementById('mqttPort').value = settings.mqtt.port;
                 document.getElementById('mqttTopic').value = settings.mqtt.topic;
                 document.getElementById('mqttUsername').value = settings.mqtt.username;
-                document.getElementById('mqttPassword').value = ''; // Don't load password
+                // Security: Don't load password into browser to prevent credential exposure
+                document.getElementById('mqttPassword').value = '';
                 
                 // Load Telegram settings
                 document.getElementById('telegramEnabled').checked = settings.telegram.enabled;
                 document.getElementById('telegramChatId').value = settings.telegram.chat_id;
                 document.getElementById('telegramThreshold').value = settings.telegram.low_level_threshold;
-                document.getElementById('telegramToken').value = ''; // Don't load token
+                // Security: Don't load token into browser to prevent credential exposure
+                document.getElementById('telegramToken').value = '';
                 
                 // Clear test results
                 document.getElementById('mqttTestResult').style.display = 'none';

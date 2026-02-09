@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import base64
+import requests
 from flask import Flask, render_template, jsonify, request
 import paho.mqtt.client as mqtt
 from datetime import datetime
@@ -47,15 +48,26 @@ class CredentialManager:
         with open(self.salt_file, 'rb') as f:
             salt = f.read()
         
-        # Generate key from machine ID (or create one if not available)
+        # Generate key from machine ID (or create persistent one if not available)
         try:
             with open('/etc/machine-id', 'r') as f:
                 machine_id = f.read().strip()
         except:
-            # Fallback for non-Linux systems or if file doesn't exist
-            machine_id = 'default-key-fallback-12345'
+            # Fallback: Create and persist a unique machine ID if not on Linux
+            machine_id_file = '.machine_id'
+            if os.path.exists(machine_id_file):
+                with open(machine_id_file, 'r') as f:
+                    machine_id = f.read().strip()
+            else:
+                # Generate unique ID and persist it
+                machine_id = base64.b64encode(os.urandom(32)).decode('utf-8')
+                with open(machine_id_file, 'w') as f:
+                    f.write(machine_id)
+                os.chmod(machine_id_file, 0o600)
         
-        # Derive encryption key
+        # Derive encryption key using PBKDF2 with 100,000 iterations
+        # This provides strong key derivation while maintaining reasonable performance
+        # on Raspberry Pi Zero (takes ~0.5s per operation)
         kdf = PBKDF2(
             algorithm=hashes.SHA256(),
             length=32,
@@ -135,10 +147,16 @@ class FoodLevelMonitor:
         """Save configuration to file (non-sensitive data only)"""
         # Create a copy without sensitive data
         safe_config = json.loads(json.dumps(self.config))
-        safe_config['mqtt']['username'] = ''
-        safe_config['mqtt']['password'] = ''
-        safe_config['telegram']['bot_token'] = ''
-        safe_config['telegram']['chat_id'] = ''
+        
+        # Remove sensitive keys entirely to indicate they're stored encrypted elsewhere
+        if 'username' in safe_config['mqtt']:
+            del safe_config['mqtt']['username']
+        if 'password' in safe_config['mqtt']:
+            del safe_config['mqtt']['password']
+        if 'bot_token' in safe_config['telegram']:
+            del safe_config['telegram']['bot_token']
+        if 'chat_id' in safe_config['telegram']:
+            del safe_config['telegram']['chat_id']
         
         with open(CONFIG_FILE, 'w') as f:
             json.dump(safe_config, f, indent=2)
@@ -297,7 +315,6 @@ class FoodLevelMonitor:
         """Send notification via Telegram"""
         if self.config['telegram']['enabled']:
             try:
-                import requests
                 url = f"https://api.telegram.org/bot{self.config['telegram']['bot_token']}/sendMessage"
                 data = {
                     'chat_id': self.config['telegram']['chat_id'],
@@ -505,7 +522,6 @@ def test_telegram():
     """Test Telegram bot"""
     try:
         data = request.json
-        import requests
         
         url = f"https://api.telegram.org/bot{data['bot_token']}/getMe"
         response = requests.get(url, timeout=10)
