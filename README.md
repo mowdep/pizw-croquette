@@ -4,8 +4,10 @@ Low food detector for my cats based on Raspberry Pi Zero WH and HC-SR04 Ultrason
 ## Features
 
 - 📊 **Web Interface**: Beautiful, responsive web dashboard displaying food level percentage with visual progress bar
+- ⚙️ **Web-based Settings**: Configure MQTT and Telegram directly from the web UI
 - 🔧 **Easy Calibration**: Simple web-based calibration for empty and full container measurements
-- 📡 **MQTT Integration**: Publishes food level data to MQTT broker for Home Assistant integration
+- 🔒 **Secure Credentials**: Passwords and tokens encrypted using PBKDF2+Fernet with device-specific keys
+- 📡 **MQTT Integration**: Publishes food level data to MQTT broker for Home Assistant integration (with authentication support)
 - 📱 **Telegram Notifications**: Sends alerts when food level is low (configurable threshold)
 - 🔄 **Auto Refresh**: Real-time monitoring with automatic updates
 - 🎯 **Accurate Measurements**: Uses HC-SR04 ultrasonic sensor (Kitronic compatible)
@@ -180,6 +182,28 @@ To run the application automatically on boot:
 2. View the current food level percentage and distance
 3. Click **Refresh** to manually update the reading
 4. Click **Calibrate** to set up the sensor for your container
+5. Click **Settings** to configure MQTT and Telegram
+
+### Settings Configuration
+
+The Settings page allows you to configure MQTT and Telegram without editing config files:
+
+#### MQTT Settings
+1. Click the **Settings** button
+2. Enable MQTT and enter your broker details
+3. Optionally add username and password for authentication
+4. Click **Test Connection** to verify settings
+5. Click **Save Settings**
+
+#### Telegram Settings
+1. Click the **Settings** button
+2. Enable Telegram Notifications
+3. Enter your bot token and chat ID
+4. Set the low level alert threshold (%)
+5. Click **Test Bot** to verify the bot is working
+6. Click **Save Settings**
+
+**Security Note**: All credentials (MQTT passwords, Telegram tokens) are encrypted using PBKDF2+Fernet encryption with device-specific keys and stored with restrictive file permissions (600).
 
 ### Calibration Process
 
