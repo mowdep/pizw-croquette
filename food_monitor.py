@@ -26,7 +26,6 @@ class FoodLevelMonitor:
         self.current_level = 0
         self.current_distance = 0
         self.mqtt_client = None
-        self.telegram_bot = None
         self.last_notification_time = 0
         
         # Setup GPIO
@@ -77,7 +76,7 @@ class FoodLevelMonitor:
         try:
             # Ensure trigger is low
             GPIO.output(self.config['sensor']['trigger_pin'], GPIO.LOW)
-            time.sleep(0.1)
+            time.sleep(0.002)  # 2ms delay as per HC-SR04 datasheet
             
             # Send 10us pulse to trigger
             GPIO.output(self.config['sensor']['trigger_pin'], GPIO.HIGH)
@@ -169,23 +168,24 @@ class FoodLevelMonitor:
     
     def setup_telegram(self):
         """Setup Telegram bot"""
-        try:
-            from telegram import Bot
-            self.telegram_bot = Bot(token=self.config['telegram']['bot_token'])
-            print("Telegram bot initialized")
-        except Exception as e:
-            print(f"Error setting up Telegram: {e}")
-            self.telegram_bot = None
+        # Telegram notifications use direct API via requests
+        # No initialization needed
+        if self.config['telegram']['enabled'] and self.config['telegram']['bot_token']:
+            print("Telegram notifications enabled")
+        else:
+            print("Telegram notifications disabled")
     
     def send_telegram_notification(self, message):
         """Send notification via Telegram"""
-        if self.telegram_bot:
+        if self.config['telegram']['enabled']:
             try:
-                import asyncio
-                asyncio.run(self.telegram_bot.send_message(
-                    chat_id=self.config['telegram']['chat_id'],
-                    text=message
-                ))
+                import requests
+                url = f"https://api.telegram.org/bot{self.config['telegram']['bot_token']}/sendMessage"
+                data = {
+                    'chat_id': self.config['telegram']['chat_id'],
+                    'text': message
+                }
+                requests.post(url, data=data, timeout=10)
             except Exception as e:
                 print(f"Error sending Telegram notification: {e}")
     
