@@ -1,0 +1,14 @@
+[Unit]
+Description=Food Level Monitor Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pizw-croquette
+ExecStart=/usr/bin/python3 /home/pi/pizw-croquette/food_monitor.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

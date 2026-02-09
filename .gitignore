@@ -1,0 +1,6 @@
+config.json
+calibration.json
+__pycache__/
+*.pyc
+*.pyo
+*.log
