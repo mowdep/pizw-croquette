@@ -1,14 +1,24 @@
 [Unit]
-Description=Food Level Monitor Service
-After=network.target
+Description=Moniteur de niveau de croquettes
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/pizw-croquette
-ExecStart=/usr/bin/python3 /home/pi/pizw-croquette/food_monitor.py
-Restart=on-failure
-RestartSec=5s
+WorkingDirectory=/opt/pizw-croquette
+EnvironmentFile=/opt/pizw-croquette/.env
+ExecStart=/opt/pizw-croquette/.venv/bin/python food_monitor.py
+Restart=always
+RestartSec=5
+
+# Utilisateur dédié, membre du groupe gpio (accès /dev/gpiomem sans root).
+User=croquette
+Group=gpio
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/pizw-croquette
 
 [Install]
 WantedBy=multi-user.target

@@ -1,577 +1,296 @@
 #!/usr/bin/env python3
-"""
-Food Level Monitor
-Monitors food level using HC-SR04 ultrasonic sensor on Raspberry Pi Zero WH
-Features: Web interface, MQTT integration, Telegram notifications
-"""
+"""Niveau de croquettes — HC-SR04 sur Raspberry Pi Zero WH.
 
-import RPi.GPIO as GPIO
-import time
+Un seul thread mesure. Le web ne fait que lire l'état en cache.
+Les secrets viennent de l'environnement, jamais du disque applicatif.
+"""
+from __future__ import annotations
+
 import json
+import logging
 import os
+import statistics
 import threading
-import base64
-import requests
-from flask import Flask, render_template, jsonify, request
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
 import paho.mqtt.client as mqtt
-from datetime import datetime
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+import requests
+from flask import Flask, jsonify, render_template, request
 
-# Configuration
-CONFIG_FILE = 'config.json'
-CALIBRATION_FILE = 'calibration.json'
-CREDENTIALS_FILE = 'credentials.enc'
-SALT_FILE = '.salt'
+if os.getenv("FOOD_MONITOR_FAKE"):        # dev sans matériel : voir fakegpio.py
+    import random
 
-class CredentialManager:
-    """Manages encrypted storage of sensitive credentials"""
-    
-    def __init__(self, salt_file=SALT_FILE, creds_file=CREDENTIALS_FILE):
-        self.salt_file = salt_file
-        self.creds_file = creds_file
-        self._ensure_salt()
-    
-    def _ensure_salt(self):
-        """Create salt file if it doesn't exist"""
-        if not os.path.exists(self.salt_file):
-            salt = os.urandom(16)
-            with open(self.salt_file, 'wb') as f:
-                f.write(salt)
-            # Set restrictive permissions (owner read/write only)
-            os.chmod(self.salt_file, 0o600)
-    
-    def _get_cipher(self):
-        """Get Fernet cipher using device-specific key"""
-        # Read salt
-        with open(self.salt_file, 'rb') as f:
-            salt = f.read()
-        
-        # Generate key from machine ID (or create persistent one if not available)
-        try:
-            with open('/etc/machine-id', 'r') as f:
-                machine_id = f.read().strip()
-        except:
-            # Fallback: Create and persist a unique machine ID if not on Linux
-            machine_id_file = '.machine_id'
-            if os.path.exists(machine_id_file):
-                with open(machine_id_file, 'r') as f:
-                    machine_id = f.read().strip()
-            else:
-                # Generate unique ID and persist it
-                machine_id = base64.b64encode(os.urandom(32)).decode('utf-8')
-                with open(machine_id_file, 'w') as f:
-                    f.write(machine_id)
-                os.chmod(machine_id_file, 0o600)
-        
-        # Derive encryption key using PBKDF2 with 100,000 iterations
-        # This provides strong key derivation while maintaining reasonable performance
-        # on Raspberry Pi Zero (takes ~0.5s per operation)
-        kdf = PBKDF2(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(machine_id.encode()))
-        return Fernet(key)
-    
-    def save_credentials(self, credentials):
-        """Encrypt and save credentials"""
-        cipher = self._get_cipher()
-        encrypted = cipher.encrypt(json.dumps(credentials).encode())
-        
-        with open(self.creds_file, 'wb') as f:
-            f.write(encrypted)
-        
-        # Set restrictive permissions
-        os.chmod(self.creds_file, 0o600)
-    
-    def load_credentials(self):
-        """Load and decrypt credentials"""
-        if not os.path.exists(self.creds_file):
-            return {}
-        
-        try:
-            cipher = self._get_cipher()
-            with open(self.creds_file, 'rb') as f:
-                encrypted = f.read()
-            
-            decrypted = cipher.decrypt(encrypted)
-            return json.loads(decrypted.decode())
-        except Exception as e:
-            print(f"Error loading credentials: {e}")
-            return {}
+    from fakegpio import FakeHCSR04
 
-class FoodLevelMonitor:
-    def __init__(self, config_file=CONFIG_FILE):
-        """Initialize the food level monitor"""
-        self.config = self.load_config(config_file)
-        self.calibration = self.load_calibration()
-        self.credentials = CredentialManager()
-        self.current_level = 0
-        self.current_distance = 0
-        self.mqtt_client = None
-        self.last_notification_time = 0
-        
-        # Load credentials and merge with config
-        self._load_credentials_into_config()
-        
-        # Setup GPIO
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.config['sensor']['trigger_pin'], GPIO.OUT)
-        GPIO.setup(self.config['sensor']['echo_pin'], GPIO.IN)
-        
-        # Initialize MQTT if enabled
-        if self.config['mqtt']['enabled']:
-            self.setup_mqtt()
-        
-        # Initialize Telegram if enabled
-        if self.config['telegram']['enabled']:
-            self.setup_telegram()
-    
-    def _load_credentials_into_config(self):
-        """Load encrypted credentials into config"""
-        creds = self.credentials.load_credentials()
-        
-        # Merge MQTT credentials
-        if 'mqtt' in creds:
-            self.config['mqtt'].update(creds['mqtt'])
-        
-        # Merge Telegram credentials
-        if 'telegram' in creds:
-            self.config['telegram'].update(creds['telegram'])
-    
-    def save_config(self):
-        """Save configuration to file (non-sensitive data only)"""
-        # Create a copy without sensitive data
-        safe_config = json.loads(json.dumps(self.config))
-        
-        # Remove sensitive keys entirely to indicate they're stored encrypted elsewhere
-        if 'username' in safe_config['mqtt']:
-            del safe_config['mqtt']['username']
-        if 'password' in safe_config['mqtt']:
-            del safe_config['mqtt']['password']
-        if 'bot_token' in safe_config['telegram']:
-            del safe_config['telegram']['bot_token']
-        if 'chat_id' in safe_config['telegram']:
-            del safe_config['telegram']['chat_id']
-        
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(safe_config, f, indent=2)
-    
-    def save_credentials_to_store(self, mqtt_creds=None, telegram_creds=None):
-        """Save credentials to encrypted storage"""
-        creds = self.credentials.load_credentials()
-        
-        if mqtt_creds:
-            creds['mqtt'] = mqtt_creds
-            # Update runtime config
-            self.config['mqtt'].update(mqtt_creds)
-        
-        if telegram_creds:
-            creds['telegram'] = telegram_creds
-            # Update runtime config
-            self.config['telegram'].update(telegram_creds)
-        
-        self.credentials.save_credentials(creds)
-    
-    def load_config(self, config_file):
-        """Load configuration from JSON file"""
-        if not os.path.exists(config_file):
-            # Use example config if config.json doesn't exist
-            config_file = 'config.example.json'
-        
-        with open(config_file, 'r') as f:
-            return json.load(f)
-    
-    def load_calibration(self):
-        """Load calibration data"""
-        if os.path.exists(CALIBRATION_FILE):
-            with open(CALIBRATION_FILE, 'r') as f:
-                return json.load(f)
-        else:
-            # Default calibration from config
-            return {
-                'max_distance_cm': self.config['calibration']['max_distance_cm'],
-                'min_distance_cm': self.config['calibration']['min_distance_cm']
-            }
-    
-    def save_calibration(self, min_distance, max_distance):
-        """Save calibration data"""
-        self.calibration = {
-            'max_distance_cm': max_distance,
-            'min_distance_cm': min_distance
-        }
-        with open(CALIBRATION_FILE, 'w') as f:
-            json.dump(self.calibration, f, indent=2)
-    
-    def measure_distance(self):
-        """Measure distance using HC-SR04 sensor"""
-        try:
-            # Ensure trigger is low
-            GPIO.output(self.config['sensor']['trigger_pin'], GPIO.LOW)
-            time.sleep(0.002)  # 2ms delay as per HC-SR04 datasheet
-            
-            # Send 10us pulse to trigger
-            GPIO.output(self.config['sensor']['trigger_pin'], GPIO.HIGH)
-            time.sleep(0.00001)
-            GPIO.output(self.config['sensor']['trigger_pin'], GPIO.LOW)
-            
-            # Wait for echo
-            pulse_start = time.time()
-            timeout = pulse_start + 0.1  # 100ms timeout
-            
-            while GPIO.input(self.config['sensor']['echo_pin']) == GPIO.LOW:
-                pulse_start = time.time()
-                if pulse_start > timeout:
-                    return None
-            
-            pulse_end = time.time()
-            timeout = pulse_end + 0.1
-            
-            while GPIO.input(self.config['sensor']['echo_pin']) == GPIO.HIGH:
-                pulse_end = time.time()
-                if pulse_end > timeout:
-                    return None
-            
-            # Calculate distance
-            pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * 17150  # Speed of sound = 34300 cm/s, divided by 2
-            distance = round(distance, 2)
-            
-            return distance
-        except Exception as e:
-            print(f"Error measuring distance: {e}")
+    GPIO = FakeHCSR04(distances=lambda: random.uniform(4, 32))
+else:
+    import RPi.GPIO as GPIO
+
+log = logging.getLogger("croquette")
+
+CONFIG_PATH = Path(os.getenv("FOOD_MONITOR_CONFIG", "config.json"))
+ADMIN_TOKEN = os.getenv("FOOD_MONITOR_TOKEN")
+
+# DEFAULTS sert de schéma : il fixe les clés ET les types. Voir coerce().
+DEFAULTS = {
+    "sensor": {"trigger_pin": 23, "echo_pin": 24, "interval_s": 60, "samples": 5},
+    "calibration": {"full_cm": 5.0, "empty_cm": 30.0},
+    "mqtt": {"enabled": False, "host": "localhost", "port": 1883,
+             "topic": "home/croquettes/level"},
+    "telegram": {"enabled": False, "threshold_pct": 20, "cooldown_s": 3600},
+    "web": {"host": "0.0.0.0", "port": 5000},
+}
+
+SECRETS = {k: os.getenv(k) for k in
+           ("MQTT_USERNAME", "MQTT_PASSWORD", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")}
+
+SPEED_OF_SOUND_CM_S = 34300
+RANGE_CM = (2.0, 400.0)          # hors de cette plage, le HC-SR04 raconte n'importe quoi
+SETTLE_S = 0.06                  # >60 ms entre deux pings (datasheet)
+
+CONFIG: dict = {}
+STATE = {"level": None, "distance_cm": None, "measured_at": None, "mqtt_connected": False}
+_gpio = threading.Lock()
+_alert = {"active": False, "sent_at": 0.0}
+_mqtt: mqtt.Client | None = None
+
+
+# ---------------------------------------------------------------- configuration
+
+def coerce(schema, value):
+    """Aligne `value` sur la forme et les types de `schema`.
+
+    Remplace à lui seul : le merge des défauts, la validation de types
+    (les <input> HTML renvoient des strings) et le filtrage des clés inconnues.
+    """
+    if not isinstance(schema, dict):
+        return bool(value) if isinstance(schema, bool) else type(schema)(value)
+    if not isinstance(value, dict):
+        value = {}
+    return {k: coerce(v, value.get(k, v)) for k, v in schema.items()}
+
+
+def validate(cfg: dict) -> None:
+    cal, sensor, tg = cfg["calibration"], cfg["sensor"], cfg["telegram"]
+    if not RANGE_CM[0] <= cal["full_cm"] < cal["empty_cm"] <= RANGE_CM[1]:
+        raise ValueError("Calibration : distance « plein » < distance « vide », dans 2–400 cm.")
+    if sensor["interval_s"] < 5:
+        raise ValueError("Intervalle : 5 s minimum.")
+    if not 1 <= sensor["samples"] <= 21:
+        raise ValueError("Échantillons : entre 1 et 21.")
+    if not 0 <= tg["threshold_pct"] <= 100:
+        raise ValueError("Seuil d'alerte : entre 0 et 100 %.")
+    if sensor["trigger_pin"] == sensor["echo_pin"]:
+        raise ValueError("TRIG et ECHO doivent être sur deux broches différentes.")
+
+
+def load_config() -> dict:
+    try:
+        raw = json.loads(CONFIG_PATH.read_text())
+    except FileNotFoundError:
+        raw = {}
+    except json.JSONDecodeError as exc:
+        log.error("config.json illisible (%s) — défauts appliqués.", exc)
+        raw = {}
+    cfg = coerce(DEFAULTS, raw)
+    validate(cfg)
+    return cfg
+
+
+def save_config(cfg: dict) -> None:
+    tmp = CONFIG_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.replace(CONFIG_PATH)  # écriture atomique : pas de config tronquée après coupure
+
+
+# ---------------------------------------------------------------------- capteur
+
+def _wait(pin: int, level: int, timeout: float) -> float | None:
+    """Attend `level` sur `pin`. Renvoie l'instant, ou None au timeout."""
+    deadline = time.monotonic() + timeout
+    while GPIO.input(pin) != level:
+        if time.monotonic() > deadline:
             return None
-    
-    def calculate_level_percentage(self, distance):
-        """Calculate food level percentage based on calibration"""
-        if distance is None:
-            return 0
-        
-        max_dist = self.calibration['max_distance_cm']
-        min_dist = self.calibration['min_distance_cm']
-        
-        # Invert: smaller distance = more food = higher percentage
-        if distance <= min_dist:
-            return 100
-        elif distance >= max_dist:
-            return 0
-        else:
-            percentage = 100 - ((distance - min_dist) / (max_dist - min_dist) * 100)
-            return round(percentage, 1)
-    
-    def setup_mqtt(self):
-        """Setup MQTT client"""
-        try:
-            self.mqtt_client = mqtt.Client()
-            
-            if self.config['mqtt']['username']:
-                self.mqtt_client.username_pw_set(
-                    self.config['mqtt']['username'],
-                    self.config['mqtt']['password']
-                )
-            
-            self.mqtt_client.connect(
-                self.config['mqtt']['broker'],
-                self.config['mqtt']['port'],
-                60
-            )
-            self.mqtt_client.loop_start()
-            print("MQTT client connected")
-        except Exception as e:
-            print(f"Error setting up MQTT: {e}")
-            self.mqtt_client = None
-    
-    def publish_mqtt(self, level, distance):
-        """Publish data to MQTT broker"""
-        if self.mqtt_client:
-            try:
-                payload = {
-                    'level': level,
-                    'distance': distance,
-                    'timestamp': datetime.now().isoformat()
-                }
-                self.mqtt_client.publish(
-                    self.config['mqtt']['topic'],
-                    json.dumps(payload),
-                    retain=True
-                )
-            except Exception as e:
-                print(f"Error publishing to MQTT: {e}")
-    
-    def setup_telegram(self):
-        """Setup Telegram bot"""
-        # Telegram notifications use direct API via requests
-        # No initialization needed
-        if self.config['telegram']['enabled'] and self.config['telegram']['bot_token']:
-            print("Telegram notifications enabled")
-        else:
-            print("Telegram notifications disabled")
-    
-    def send_telegram_notification(self, message):
-        """Send notification via Telegram"""
-        if self.config['telegram']['enabled']:
-            try:
-                url = f"https://api.telegram.org/bot{self.config['telegram']['bot_token']}/sendMessage"
-                data = {
-                    'chat_id': self.config['telegram']['chat_id'],
-                    'text': message
-                }
-                requests.post(url, data=data, timeout=10)
-            except Exception as e:
-                print(f"Error sending Telegram notification: {e}")
-    
-    def check_and_notify(self, level):
-        """Check if notification should be sent"""
-        if not self.config['telegram']['enabled']:
-            return
-        
-        threshold = self.config['telegram']['low_level_threshold']
-        current_time = time.time()
-        
-        # Send notification if level is low and at least 1 hour has passed since last notification
-        if level < threshold and (current_time - self.last_notification_time) > 3600:
-            message = f"⚠️ Food level is low: {level}%\nPlease refill the dispenser."
-            self.send_telegram_notification(message)
-            self.last_notification_time = current_time
-    
-    def update_reading(self):
-        """Take a reading and update current values"""
-        distance = self.measure_distance()
-        if distance is not None:
-            self.current_distance = distance
-            self.current_level = self.calculate_level_percentage(distance)
-            
-            # Publish to MQTT
-            if self.config['mqtt']['enabled']:
-                self.publish_mqtt(self.current_level, self.current_distance)
-            
-            # Check for notifications
-            self.check_and_notify(self.current_level)
-        
-        return self.current_level, self.current_distance
-    
-    def cleanup(self):
-        """Cleanup GPIO and connections"""
-        GPIO.cleanup()
-        if self.mqtt_client:
-            self.mqtt_client.loop_stop()
-            self.mqtt_client.disconnect()
+    return time.monotonic()
 
-# Flask Web Application
-app = Flask(__name__)
-monitor = None
 
-@app.route('/')
-def index():
-    """Serve the main web page"""
-    return render_template('index.html')
+def _ping(trigger: int, echo: int) -> float | None:
+    GPIO.output(trigger, True)
+    time.sleep(10e-6)
+    GPIO.output(trigger, False)
+    start = _wait(echo, 1, 0.05)
+    end = _wait(echo, 0, 0.05) if start else None
+    return (end - start) * SPEED_OF_SOUND_CM_S / 2 if end else None
 
-@app.route('/api/level')
-def get_level():
-    """API endpoint to get current food level"""
-    level, distance = monitor.update_reading()
-    return jsonify({
-        'level': level,
-        'distance': distance,
-        'timestamp': datetime.now().isoformat()
-    })
 
-@app.route('/api/calibrate', methods=['POST'])
-def calibrate():
-    """API endpoint to calibrate sensor"""
-    data = request.json
-    action = data.get('action')
-    
-    if action == 'measure':
-        # Take measurement for calibration
-        distance = monitor.measure_distance()
-        return jsonify({'distance': distance})
-    
-    elif action == 'save':
-        # Save calibration values
-        min_distance = data.get('min_distance')
-        max_distance = data.get('max_distance')
-        monitor.save_calibration(min_distance, max_distance)
-        return jsonify({'success': True})
-    
-    return jsonify({'error': 'Invalid action'}), 400
+def measure(cfg: dict) -> float | None:
+    """Médiane des mesures plausibles. None si le capteur ne répond pas."""
+    s = cfg["sensor"]
+    with _gpio:
+        samples = []
+        for _ in range(s["samples"]):
+            d = _ping(s["trigger_pin"], s["echo_pin"])
+            if d and RANGE_CM[0] <= d <= RANGE_CM[1]:
+                samples.append(d)
+            time.sleep(SETTLE_S)
+    return round(statistics.median(samples), 1) if samples else None
 
-@app.route('/api/settings', methods=['GET'])
-def get_settings():
-    """API endpoint to get current settings (without sensitive data)"""
-    settings = {
-        'mqtt': {
-            'enabled': monitor.config['mqtt']['enabled'],
-            'broker': monitor.config['mqtt']['broker'],
-            'port': monitor.config['mqtt']['port'],
-            'username': monitor.config['mqtt']['username'],
-            'topic': monitor.config['mqtt']['topic'],
-            'has_password': bool(monitor.config['mqtt']['password'])
-        },
-        'telegram': {
-            'enabled': monitor.config['telegram']['enabled'],
-            'chat_id': monitor.config['telegram']['chat_id'],
-            'low_level_threshold': monitor.config['telegram']['low_level_threshold'],
-            'has_bot_token': bool(monitor.config['telegram']['bot_token'])
-        },
-        'sensor': monitor.config['sensor']
-    }
-    return jsonify(settings)
 
-@app.route('/api/settings/mqtt', methods=['POST'])
-def update_mqtt_settings():
-    """API endpoint to update MQTT settings"""
+def level_pct(distance: float | None, cal: dict) -> float | None:
+    """0 % = vide, 100 % = plein. None si pas de mesure — surtout pas 0."""
+    if distance is None:
+        return None
+    span = cal["empty_cm"] - cal["full_cm"]
+    return round(min(100.0, max(0.0, (cal["empty_cm"] - distance) / span * 100)), 1)
+
+
+# ------------------------------------------------------------------- sorties
+
+def apply_mqtt(cfg: dict) -> None:
+    global _mqtt
+    if _mqtt:
+        _mqtt.loop_stop()
+        _mqtt.disconnect()
+        _mqtt = None
+    STATE["mqtt_connected"] = False
+    if not cfg["mqtt"]["enabled"]:
+        return
     try:
-        data = request.json
-        
-        # Update config
-        monitor.config['mqtt']['enabled'] = data.get('enabled', False)
-        monitor.config['mqtt']['broker'] = data.get('broker', 'localhost')
-        monitor.config['mqtt']['port'] = int(data.get('port', 1883))
-        monitor.config['mqtt']['topic'] = data.get('topic', 'home/food_dispenser/level')
-        
-        # Handle credentials separately
-        mqtt_creds = {}
-        if 'username' in data:
-            mqtt_creds['username'] = data['username']
-            monitor.config['mqtt']['username'] = data['username']
-        if 'password' in data and data['password']:  # Only update if provided
-            mqtt_creds['password'] = data['password']
-            monitor.config['mqtt']['password'] = data['password']
-        
-        # Save credentials to encrypted storage
-        if mqtt_creds:
-            monitor.save_credentials_to_store(mqtt_creds=mqtt_creds)
-        
-        # Save non-sensitive config
-        monitor.save_config()
-        
-        # Reconnect MQTT with new settings
-        if monitor.mqtt_client:
-            monitor.mqtt_client.loop_stop()
-            monitor.mqtt_client.disconnect()
-            monitor.mqtt_client = None
-        
-        if monitor.config['mqtt']['enabled']:
-            monitor.setup_mqtt()
-        
-        return jsonify({'success': True, 'message': 'MQTT settings updated'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)  # paho >= 2
+    except AttributeError:
+        client = mqtt.Client()                                  # paho 1.x
+    if SECRETS["MQTT_USERNAME"]:
+        client.username_pw_set(SECRETS["MQTT_USERNAME"], SECRETS["MQTT_PASSWORD"] or "")
+    client.on_connect = lambda *_: STATE.update(mqtt_connected=True)
+    client.on_disconnect = lambda *_: STATE.update(mqtt_connected=False)
+    # connect_async : le démarrage ne dépend plus du broker, et paho reconnecte seul.
+    client.connect_async(cfg["mqtt"]["host"], cfg["mqtt"]["port"], 60)
+    client.loop_start()
+    _mqtt = client
 
-@app.route('/api/settings/telegram', methods=['POST'])
-def update_telegram_settings():
-    """API endpoint to update Telegram settings"""
+
+def publish(cfg: dict, level: float, distance: float) -> None:
+    if not _mqtt:
+        return
+    payload = json.dumps({"level": level, "distance_cm": distance,
+                          "timestamp": STATE["measured_at"]})
+    _mqtt.publish(cfg["mqtt"]["topic"], payload, retain=True)
+
+
+def telegram(text: str) -> None:
+    token, chat = SECRETS["TELEGRAM_BOT_TOKEN"], SECRETS["TELEGRAM_CHAT_ID"]
     try:
-        data = request.json
-        
-        # Update config
-        monitor.config['telegram']['enabled'] = data.get('enabled', False)
-        monitor.config['telegram']['low_level_threshold'] = int(data.get('low_level_threshold', 20))
-        
-        # Handle credentials separately
-        telegram_creds = {}
-        if 'bot_token' in data and data['bot_token']:  # Only update if provided
-            telegram_creds['bot_token'] = data['bot_token']
-            monitor.config['telegram']['bot_token'] = data['bot_token']
-        if 'chat_id' in data:
-            telegram_creds['chat_id'] = data['chat_id']
-            monitor.config['telegram']['chat_id'] = data['chat_id']
-        
-        # Save credentials to encrypted storage
-        if telegram_creds:
-            monitor.save_credentials_to_store(telegram_creds=telegram_creds)
-        
-        # Save non-sensitive config
-        monitor.save_config()
-        
-        # Reinitialize Telegram with new settings
-        if monitor.config['telegram']['enabled']:
-            monitor.setup_telegram()
-        
-        return jsonify({'success': True, 'message': 'Telegram settings updated'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                      json={"chat_id": chat, "text": text}, timeout=10)
+    except requests.RequestException as exc:
+        log.warning("Telegram : %s", exc)
 
-@app.route('/api/settings/test/mqtt', methods=['POST'])
-def test_mqtt():
-    """Test MQTT connection"""
-    try:
-        data = request.json
-        test_client = mqtt.Client()
-        
-        if data.get('username'):
-            test_client.username_pw_set(data['username'], data.get('password', ''))
-        
-        test_client.connect(data['broker'], int(data['port']), 10)
-        test_client.loop_start()
-        time.sleep(1)
-        test_client.loop_stop()
-        test_client.disconnect()
-        
-        return jsonify({'success': True, 'message': 'MQTT connection successful'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/settings/test/telegram', methods=['POST'])
-def test_telegram():
-    """Test Telegram bot"""
-    try:
-        data = request.json
-        
-        url = f"https://api.telegram.org/bot{data['bot_token']}/getMe"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            bot_info = response.json()
-            if bot_info.get('ok'):
-                return jsonify({
-                    'success': True,
-                    'message': f"Bot verified: @{bot_info['result']['username']}"
-                })
-        
-        return jsonify({'success': False, 'error': 'Invalid bot token'}), 400
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+def notify(cfg: dict, level: float) -> None:
+    """Alerte sur front descendant, avec hystérésis : pas de spam autour du seuil."""
+    tg = cfg["telegram"]
+    if not (tg["enabled"] and SECRETS["TELEGRAM_BOT_TOKEN"] and SECRETS["TELEGRAM_CHAT_ID"]):
+        return
+    now = time.monotonic()
+    if level < tg["threshold_pct"]:
+        if not _alert["active"] or now - _alert["sent_at"] > tg["cooldown_s"]:
+            telegram(f"Croquettes : {level} %. Il faut remplir.")
+            _alert.update(active=True, sent_at=now)
+    elif _alert["active"] and level >= tg["threshold_pct"] + 10:
+        telegram(f"Gamelle remplie : {level} %.")
+        _alert["active"] = False
 
-def monitoring_loop():
-    """Background thread for continuous monitoring"""
+
+# ---------------------------------------------------------------------- boucle
+
+def cycle() -> None:
+    distance = measure(CONFIG)
+    level = level_pct(distance, CONFIG["calibration"])
+    if level is None:
+        log.warning("Aucune mesure exploitable — état conservé, marqué obsolète.")
+        return
+    STATE.update(level=level, distance_cm=distance,
+                 measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    publish(CONFIG, level, distance)
+    notify(CONFIG, level)
+
+
+def monitoring_loop() -> None:
     while True:
         try:
-            monitor.update_reading()
-            time.sleep(monitor.config['sensor']['measurement_interval'])
-        except Exception as e:
-            print(f"Error in monitoring loop: {e}")
-            time.sleep(5)
+            cycle()
+        except Exception:
+            log.exception("Cycle de mesure en échec")
+        time.sleep(CONFIG["sensor"]["interval_s"])
 
-def main():
-    """Main application entry point"""
-    global monitor
-    
+
+# ------------------------------------------------------------------------- web
+
+app = Flask(__name__)
+
+
+def protected():
+    """401 si un jeton est configuré et absent de la requête."""
+    if ADMIN_TOKEN and request.headers.get("X-Token") != ADMIN_TOKEN:
+        return jsonify(error="Jeton invalide."), 401
+    return None
+
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
+@app.get("/api/status")
+def api_status():
+    # CONFIG ne contient aucun secret : il part tel quel, sans filtrage manuel.
+    return jsonify({**STATE, "config": CONFIG, "protected": bool(ADMIN_TOKEN)})
+
+
+@app.post("/api/measure")
+def api_measure():
+    return protected() or jsonify(distance_cm=measure(CONFIG))
+
+
+@app.post("/api/config")
+def api_config():
+    if (deny := protected()):
+        return deny
+    global CONFIG
     try:
-        # Initialize monitor
-        monitor = FoodLevelMonitor()
-        
-        # Start monitoring thread
-        monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
-        monitoring_thread.start()
-        
-        # Start web server
-        print(f"Starting web server on {monitor.config['web']['host']}:{monitor.config['web']['port']}")
-        app.run(
-            host=monitor.config['web']['host'],
-            port=monitor.config['web']['port'],
-            debug=False
-        )
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-    finally:
-        if monitor:
-            monitor.cleanup()
+        candidate = coerce(CONFIG, request.get_json(silent=True) or {})
+        validate(candidate)
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
+    mqtt_changed = candidate["mqtt"] != CONFIG["mqtt"]
+    CONFIG = candidate
+    save_config(CONFIG)
+    if mqtt_changed:
+        apply_mqtt(CONFIG)
+    return jsonify(config=CONFIG)
 
-if __name__ == '__main__':
+
+def main() -> None:
+    global CONFIG
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    CONFIG = load_config()
+    if not ADMIN_TOKEN:
+        log.warning("FOOD_MONITOR_TOKEN absent : l'interface est modifiable sans "
+                    "authentification par tout le réseau local.")
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(CONFIG["sensor"]["trigger_pin"], GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(CONFIG["sensor"]["echo_pin"], GPIO.IN)
+    apply_mqtt(CONFIG)
+    threading.Thread(target=monitoring_loop, daemon=True).start()
+    try:
+        app.run(host=CONFIG["web"]["host"], port=CONFIG["web"]["port"], debug=False)
+    finally:
+        if _mqtt:
+            _mqtt.loop_stop()
+        GPIO.cleanup()
+
+
+if __name__ == "__main__":
     main()

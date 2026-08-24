@@ -1,141 +1,100 @@
-# Wiring Guide for HC-SR04 and Raspberry Pi Zero WH
+# Câblage — Pi Zero WH + HC-SR04
 
-## Components Needed
-- Raspberry Pi Zero WH v1.1
-- HC-SR04 Ultrasonic Sensor
-- 4 Female-to-Female jumper wires
-- Optional: 1kΩ and 2kΩ resistors for voltage divider (recommended)
+## Le module AMS1117 acheté ne convient pas pour ECHO
 
-## Pin Connections
+Un module « 4,75–12 V → 3,3 V 800 mA » à base d'AMS1117 est un **régulateur
+d'alimentation**, pas un adaptateur de niveau logique. Sur la ligne ECHO il ne
+marchera pas, pour trois raisons :
 
-### Basic Connection (without voltage divider)
-```
-HC-SR04 Pin    →    Raspberry Pi Zero WH Pin
-───────────────────────────────────────────────
-VCC (Power)    →    Pin 2  (5V)
-TRIG (Trigger) →    Pin 16 (GPIO 23)
-ECHO (Echo)    →    Pin 18 (GPIO 24) ⚠️ See note below
-GND (Ground)   →    Pin 6  (GND)
-```
+- Un régulateur maintient sa sortie à 3,3 V *quoi qu'il arrive en entrée*. C'est
+  exactement le contraire de ce qu'on veut : ici, il faut que la sortie recopie
+  l'entrée, en la divisant.
+- Ses condensateurs de sortie (10 à 100 µF) lissent tout. L'impulsion ECHO dure
+  150 µs à 25 ms et sa mesure repose sur la position de ses fronts à la
+  microseconde près. Un condensateur de 10 µF chargé par une entrée GPIO qui
+  consomme quelques µA met plusieurs secondes à se décharger.
+- L'AMS1117 ne peut pas *tirer* de courant vers la masse. Une fois sa sortie à
+  3,3 V, rien ne la fait redescendre.
 
-### ⚠️ IMPORTANT: Echo Pin Voltage Protection
+Résultat concret : GPIO 24 reste bloqué à 3,3 V, `_wait(echo, 0)` expire à chaque
+cycle, aucune mesure ne sort. Aucun risque pour le Pi, mais aucune mesure non plus.
+`preflight.py` détecte précisément cette signature et le dit.
 
-The HC-SR04 ECHO pin outputs 5V, but Raspberry Pi GPIO pins are only 3.3V tolerant.
-While many users connect directly without issues, using a voltage divider is **recommended**
-to protect your Raspberry Pi.
+Garde le module pour un autre projet — le Pi fournit déjà du 3,3 V régulé sur les
+pins 1 et 17.
 
-### Recommended Connection (with voltage divider)
-
-```
-HC-SR04 ECHO Pin → 1kΩ resistor → GPIO 24 (Pin 18)
-                                    ↓
-                               2kΩ resistor
-                                    ↓
-                                  GND
-```
-
-This voltage divider reduces the 5V signal to approximately 3.3V.
-
-## GPIO Pin Layout (Raspberry Pi Zero WH)
+## Ce qu'il faut : deux résistances
 
 ```
-    3.3V  [ 1] [ 2]  5V     ← Connect VCC here
-   GPIO2  [ 3] [ 4]  5V
-   GPIO3  [ 5] [ 6]  GND    ← Connect GND here
-   GPIO4  [ 7] [ 8]  GPIO14
-     GND  [ 9] [10]  GPIO15
-  GPIO17  [11] [12]  GPIO18
-  GPIO27  [13] [14]  GND
-  GPIO22  [15] [16]  GPIO23 ← Connect TRIG here
-    3.3V  [17] [18]  GPIO24 ← Connect ECHO here (via voltage divider)
-  GPIO10  [19] [20]  GND
-   GPIO9  [21] [22]  GPIO25
-  GPIO11  [23] [24]  GPIO8
-     GND  [25] [26]  GPIO7
-   ...    [...] [...]  ...
+HC-SR04 ECHO ──[ 1 kΩ ]──┬── GPIO 24  (pin 18)
+                         │
+                      [ 1,8 kΩ ]
+                         │
+                        GND
 ```
 
-## Physical Setup
+5 V × 1,8 / (1 + 1,8) = **3,21 V**, sous les 3,3 V du rail, avec un peu de marge.
 
-1. **Mount the Sensor**: Place the HC-SR04 on top of the food dispenser, pointing down
-   - Ensure the sensor faces the food surface
-   - Keep sensor parallel to food surface for best accuracy
-   - Minimum distance: 2cm, Maximum distance: 400cm
+Le 1 kΩ / 2 kΩ que recommandait l'ancienne doc donne 3,33 V : ça fonctionne, tout
+le monde le fait, mais c'est 30 mV au-dessus du rail et la diode de protection du
+GPIO conduit légèrement. 1,8 kΩ coûte pareil.
 
-2. **Sensor Position**: 
-   - Mount high enough to measure both empty and full states
-   - Avoid obstacles in the sensor's path
-   - Keep away from container edges
+Autres paires valides (rapport ≈ 1 : 1,8) : 10 kΩ / 18 kΩ (moins de courant,
+0,18 mA), 4,7 kΩ / 8,2 kΩ, 2,2 kΩ / 3,9 kΩ. Éviter au-delà de 47 kΩ : la constante
+de temps avec la capacité parasite finit par arrondir les fronts.
 
-3. **Cable Management**:
-   - Secure cables to prevent movement
-   - Keep cables away from moving parts
-   - Protect connections from moisture
+## Test à coût nul, avant d'acheter quoi que ce soit
 
-## Testing the Connection
+Beaucoup de HC-SR04 du commerce (et tous les HC-SR04P / RCWL-1601) fonctionnent
+sous 3,3 V. Dans ce cas ECHO sort à 3,3 V et **aucune adaptation n'est nécessaire** :
 
-After connecting, run this test:
-
-```bash
-python3 << EOF
-import RPi.GPIO as GPIO
-import time
-
-TRIG = 23
-ECHO = 24
-
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(TRIG, GPIO.OUT)
-GPIO.setup(ECHO, GPIO.IN)
-
-GPIO.output(TRIG, GPIO.LOW)
-time.sleep(0.1)
-
-GPIO.output(TRIG, GPIO.HIGH)
-time.sleep(0.00001)
-GPIO.output(TRIG, GPIO.LOW)
-
-pulse_start = time.time()
-while GPIO.input(ECHO) == GPIO.LOW:
-    pulse_start = time.time()
-
-pulse_end = time.time()
-while GPIO.input(ECHO) == GPIO.HIGH:
-    pulse_end = time.time()
-
-pulse_duration = pulse_end - pulse_start
-distance = pulse_duration * 17150
-distance = round(distance, 2)
-
-print(f"Distance: {distance} cm")
-
-GPIO.cleanup()
-EOF
+```
+VCC  → pin 1  (3,3 V)      au lieu de pin 2
+TRIG → pin 16 (GPIO 23)
+ECHO → pin 18 (GPIO 24)    en direct
+GND  → pin 6
 ```
 
-If you get a distance reading, your wiring is correct!
+Puis `python3 preflight.py`. S'il affiche « capteur stable » avec un écart-type
+sous 0,5 cm et 0 échec sur 20, c'est bon : la trémie fait 30 cm, on est très
+en dessous de la portée où le sous-voltage pose problème. Sinon, commande les
+deux résistances.
 
-## Troubleshooting
+> **Jamais** VCC sur 5 V *et* ECHO en direct sur le GPIO. Les entrées du BCM2835
+> ne tolèrent pas le 5 V. C'est le seul montage qui abîme quelque chose.
 
-### No reading / timeout
-- Check all connections
-- Verify GPIO pin numbers in config.json
-- Ensure sensor has clear line of sight
-- Try swapping TRIG and ECHO connections (in case they're reversed)
+## Câblage nominal (5 V + pont diviseur)
 
-### Inconsistent readings
-- Add voltage divider if not already present
-- Ensure sensor is securely mounted
-- Check for interference from other electronics
-- Verify power supply is stable
+| HC-SR04 | Pi Zero WH | Broche |
+|---|---|---|
+| VCC  | 5 V     | pin 2 |
+| TRIG | GPIO 23 | pin 16 |
+| ECHO | GPIO 24 | pin 18, **via le pont diviseur** |
+| GND  | GND     | pin 6 (ou pin 20, plus proche) |
 
-### "Permission denied" errors
-- Add user to gpio group: `sudo usermod -a -G gpio pi`
-- Or run with sudo: `sudo python3 food_monitor.py`
+```
+        3,3 V [ 1] [ 2] 5 V      ← VCC (ou pin 1 en mode 3,3 V)
+       GPIO 2 [ 3] [ 4] 5 V
+       GPIO 3 [ 5] [ 6] GND      ← GND
+                 ...
+        3,3 V [17] [18] GPIO 24  ← ECHO (pont diviseur)
+      GPIO 10 [19] [20] GND
+      GPIO 22 [15] [16] GPIO 23  ← TRIG
+```
 
-## Safety Notes
+Broches par défaut modifiables dans `config.json` ou depuis l'interface. Éviter
+GPIO 2/3 (I²C), 14/15 (UART) et 7 à 11 (SPI) si ces bus sont activés —
+`preflight.py` vérifie les conflits.
 
-1. Never connect 5V directly to GPIO pins (except dedicated 5V pins)
-2. Always use proper voltage dividers for 5V signals to GPIO
-3. Double-check connections before powering on
-4. Disconnect power before changing wiring
+## Placement du capteur
+
+Le HC-SR04 a un cône d'émission d'environ 15°. À 30 cm il « voit » un disque de
+8 cm de diamètre.
+
+- Le fixer à plat au sommet de la trémie, faisceau vertical, centré.
+- Zone morte de 2 cm : le capteur ne voit rien de plus près. Il faut donc au moins
+  2 cm entre la membrane et le niveau haut des croquettes.
+- Les parois inclinées renvoient des échos parasites. Si `preflight.py` signale des
+  mesures dispersées avec un capteur pourtant bien alimenté, c'est souvent ça :
+  décaler le capteur, ou augmenter `samples` dans la config.
+- Poussière de croquettes sur les membranes : un coup de soufflette de temps en temps.

@@ -1,795 +1,245 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Food Level Monitor</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 600px;
-            width: 100%;
-        }
-        
-        h1 {
-            color: #333;
-            text-align: center;
-            margin-bottom: 10px;
-            font-size: 2em;
-        }
-        
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 0.9em;
-        }
-        
-        .level-display {
-            text-align: center;
-            margin: 30px 0;
-        }
-        
-        .level-number {
-            font-size: 4em;
-            font-weight: bold;
-            color: #667eea;
-            margin: 20px 0;
-        }
-        
-        .level-label {
-            font-size: 1.2em;
-            color: #666;
-        }
-        
-        .progress-bar-container {
-            width: 100%;
-            height: 40px;
-            background: #e0e0e0;
-            border-radius: 20px;
-            overflow: hidden;
-            margin: 20px 0;
-            position: relative;
-        }
-        
-        .progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.5s ease;
-            border-radius: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-        }
-        
-        .progress-bar.low {
-            background: linear-gradient(90deg, #ff6b6b 0%, #ee5a6f 100%);
-        }
-        
-        .progress-bar.medium {
-            background: linear-gradient(90deg, #ffd93d 0%, #fcbf49 100%);
-        }
-        
-        .info-box {
-            background: #f5f5f5;
-            padding: 15px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }
-        
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            margin: 10px 0;
-            font-size: 0.95em;
-        }
-        
-        .info-label {
-            color: #666;
-        }
-        
-        .info-value {
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 30px;
-        }
-        
-        button {
-            flex: 1;
-            padding: 15px;
-            border: none;
-            border-radius: 10px;
-            font-size: 1em;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn-secondary {
-            background: #e0e0e0;
-            color: #333;
-        }
-        
-        .btn-secondary:hover {
-            background: #d0d0d0;
-            transform: translateY(-2px);
-        }
-        
-        .status {
-            text-align: center;
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 0.9em;
-        }
-        
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        /* Modal styles */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-        }
-        
-        .modal.show {
-            display: flex;
-        }
-        
-        .modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            max-width: 500px;
-            width: 90%;
-        }
-        
-        .modal-title {
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            color: #333;
-        }
-        
-        .calibration-step {
-            margin: 20px 0;
-            padding: 15px;
-            background: #f5f5f5;
-            border-radius: 10px;
-        }
-        
-        .calibration-step h3 {
-            color: #667eea;
-            margin-bottom: 10px;
-        }
-        
-        .calibration-value {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #333;
-            margin: 10px 0;
-        }
-        
-        .loading {
-            text-align: center;
-            color: #666;
-            font-style: italic;
-        }
-        
-        /* Form styles */
-        .form-group {
-            margin: 15px 0;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            color: #333;
-            font-weight: 500;
-        }
-        
-        .form-group input[type="text"],
-        .form-group input[type="number"],
-        .form-group input[type="password"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 1em;
-            box-sizing: border-box;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            margin: 15px 0;
-        }
-        
-        .checkbox-group input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            margin-right: 10px;
-            cursor: pointer;
-        }
-        
-        .checkbox-group label {
-            cursor: pointer;
-            user-select: none;
-        }
-        
-        .settings-section {
-            margin: 20px 0;
-            padding: 15px;
-            background: #f5f5f5;
-            border-radius: 10px;
-        }
-        
-        .settings-section h3 {
-            color: #667eea;
-            margin-bottom: 15px;
-        }
-        
-        .modal-content.wide {
-            max-width: 600px;
-        }
-        
-        .test-result {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 0.9em;
-        }
-        
-        .test-result.success {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .test-result.error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .btn-test {
-            padding: 8px 15px;
-            background: #ffc107;
-            color: #333;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 0.9em;
-            margin-top: 10px;
-        }
-        
-        .btn-test:hover {
-            background: #e0a800;
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Croquettes</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --line: #2b2f37;
+    --ink: #e6e8ec; --dim: #8b929e;
+    --ok: #4fb477; --warn: #d9a343; --low: #d9584c;
+    --accent: var(--ok);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans);
+    display: grid; place-items: center; min-height: 100vh; padding: 24px;
+  }
+  main { width: 100%; max-width: 420px; }
+  header { display: flex; align-items: baseline; justify-content: space-between;
+           padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim);
+         display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--ok); }
+  .meta { font: 12px var(--mono); color: var(--dim); }
+
+  /* Signature : la trémie elle-même, remplie par le bas. */
+  .gauge { display: grid; grid-template-columns: 76px 1fr; gap: 20px;
+           align-items: end; padding: 28px 0; }
+  .hopper { position: relative; height: 190px; border: 1px solid var(--line);
+            border-top: none; overflow: hidden;
+            clip-path: polygon(0 0, 100% 0, 78% 100%, 22% 100%); background: #0f1114; }
+  .fill { position: absolute; inset: auto 0 0 0; background: var(--accent);
+          transition: height .6s cubic-bezier(.4,0,.2,1), background .4s; }
+  .hopper::after { content: ""; position: absolute; inset: 0;
+                   background: repeating-linear-gradient(
+                     transparent 0 18px, rgba(255,255,255,.07) 18px 19px); }
+  .pct { font: 600 56px/1 var(--mono); color: var(--accent); letter-spacing: -.03em; }
+  .pct small { font-size: 22px; color: var(--dim); }
+  .sub { color: var(--dim); font: 12px var(--mono); margin-top: 8px; }
+  .stale .pct, .stale .fill { opacity: .35; }
+
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  button { flex: 1; padding: 11px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--panel); color: var(--ink); font: 500 14px var(--sans);
+           cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--warn); outline-offset: 2px; }
+
+  dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+           color: var(--ink); width: min(420px, 92vw); padding: 22px; }
+  dialog::backdrop { background: rgba(0,0,0,.65); }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 14px; }
+  fieldset { border: none; border-top: 1px solid var(--line); padding: 14px 0 0; margin: 14px 0 0; }
+  legend { font: 500 12px var(--sans); color: var(--dim); text-transform: uppercase;
+           letter-spacing: .05em; padding-right: 8px; }
+  label { display: flex; justify-content: space-between; align-items: center;
+          gap: 12px; margin: 9px 0; font-size: 14px; }
+  input[type=text], input[type=number] {
+    width: 120px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px;
+    background: #0f1114; color: var(--ink); font: 13px var(--mono); text-align: right;
+  }
+  input:focus { outline: none; border-color: var(--warn); }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--ok); }
+  .msg { min-height: 18px; margin-top: 12px; font: 12px var(--mono); color: var(--dim); }
+  .msg.err { color: var(--low); }
+  .msg.ok { color: var(--ok); }
+  .hint { color: var(--dim); font-size: 12px; margin: -4px 0 10px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
 </head>
 <body>
-    <div class="container">
-        <h1>🍽️ Food Level Monitor</h1>
-        <p class="subtitle">Ultrasonic Sensor Food Dispenser</p>
-        
-        <div class="level-display">
-            <div class="level-label">Current Food Level</div>
-            <div class="level-number" id="levelNumber">--</div>
-            
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar" style="width: 0%">
-                    <span id="progressText">0%</span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="info-box">
-            <div class="info-row">
-                <span class="info-label">Distance:</span>
-                <span class="info-value" id="distance">-- cm</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Last Updated:</span>
-                <span class="info-value" id="lastUpdate">--</span>
-            </div>
-        </div>
-        
-        <div class="button-group">
-            <button class="btn-primary" onclick="refreshData()">🔄 Refresh</button>
-            <button class="btn-secondary" onclick="showCalibration()">⚙️ Calibrate</button>
-            <button class="btn-secondary" onclick="showSettings()">🔧 Settings</button>
-        </div>
-        
-        <div id="status" class="status" style="display: none;"></div>
+<main>
+  <header>
+    <h1>Croquettes</h1>
+    <span class="meta"><span class="dot" id="mqttDot"></span>MQTT</span>
+  </header>
+
+  <div class="gauge" id="gauge">
+    <div class="hopper"><div class="fill" id="fill" style="height:0"></div></div>
+    <div>
+      <div class="pct"><span id="pct">--</span><small>%</small></div>
+      <div class="sub" id="sub">en attente de mesure</div>
     </div>
-    
-    <!-- Calibration Modal -->
-    <div id="calibrationModal" class="modal">
-        <div class="modal-content">
-            <h2 class="modal-title">Sensor Calibration</h2>
-            
-            <div class="calibration-step">
-                <h3>Step 1: Empty Container</h3>
-                <p>Empty the food container completely, then click measure.</p>
-                <button class="btn-primary" onclick="measureMax()" style="width: 100%; margin-top: 10px;">
-                    Measure Empty
-                </button>
-                <div class="calibration-value" id="maxDistance">--</div>
-            </div>
-            
-            <div class="calibration-step">
-                <h3>Step 2: Full Container</h3>
-                <p>Fill the food container completely, then click measure.</p>
-                <button class="btn-primary" onclick="measureMin()" style="width: 100%; margin-top: 10px;">
-                    Measure Full
-                </button>
-                <div class="calibration-value" id="minDistance">--</div>
-            </div>
-            
-            <div class="button-group">
-                <button class="btn-primary" onclick="saveCalibration()">💾 Save</button>
-                <button class="btn-secondary" onclick="closeCalibration()">✖️ Cancel</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Settings Modal -->
-    <div id="settingsModal" class="modal">
-        <div class="modal-content wide">
-            <h2 class="modal-title">⚙️ Settings</h2>
-            
-            <!-- MQTT Settings -->
-            <div class="settings-section">
-                <h3>📡 MQTT Configuration</h3>
-                
-                <div class="checkbox-group">
-                    <input type="checkbox" id="mqttEnabled">
-                    <label for="mqttEnabled">Enable MQTT</label>
-                </div>
-                
-                <div class="form-group">
-                    <label for="mqttBroker">Broker Address:</label>
-                    <input type="text" id="mqttBroker" placeholder="localhost or IP address">
-                </div>
-                
-                <div class="form-group">
-                    <label for="mqttPort">Port:</label>
-                    <input type="number" id="mqttPort" placeholder="1883">
-                </div>
-                
-                <div class="form-group">
-                    <label for="mqttTopic">Topic:</label>
-                    <input type="text" id="mqttTopic" placeholder="home/food_dispenser/level">
-                </div>
-                
-                <div class="form-group">
-                    <label for="mqttUsername">Username (optional):</label>
-                    <input type="text" id="mqttUsername" placeholder="Username">
-                </div>
-                
-                <div class="form-group">
-                    <label for="mqttPassword">Password (optional):</label>
-                    <input type="password" id="mqttPassword" placeholder="Leave blank to keep current">
-                </div>
-                
-                <button class="btn-test" onclick="testMqtt()">🔍 Test Connection</button>
-                <div id="mqttTestResult" class="test-result" style="display: none;"></div>
-            </div>
-            
-            <!-- Telegram Settings -->
-            <div class="settings-section">
-                <h3>📱 Telegram Notifications</h3>
-                
-                <div class="checkbox-group">
-                    <input type="checkbox" id="telegramEnabled">
-                    <label for="telegramEnabled">Enable Telegram Notifications</label>
-                </div>
-                
-                <div class="form-group">
-                    <label for="telegramToken">Bot Token:</label>
-                    <input type="password" id="telegramToken" placeholder="Leave blank to keep current">
-                </div>
-                
-                <div class="form-group">
-                    <label for="telegramChatId">Chat ID:</label>
-                    <input type="text" id="telegramChatId" placeholder="Your chat ID">
-                </div>
-                
-                <div class="form-group">
-                    <label for="telegramThreshold">Low Level Alert Threshold (%):</label>
-                    <input type="number" id="telegramThreshold" min="0" max="100" placeholder="20">
-                </div>
-                
-                <button class="btn-test" onclick="testTelegram()">🔍 Test Bot</button>
-                <div id="telegramTestResult" class="test-result" style="display: none;"></div>
-            </div>
-            
-            <div class="button-group">
-                <button class="btn-primary" onclick="saveSettings()">💾 Save Settings</button>
-                <button class="btn-secondary" onclick="closeSettings()">✖️ Cancel</button>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-        let maxDistanceValue = null;
-        let minDistanceValue = null;
-        
-        // Fetch and update food level data
-        async function refreshData() {
-            try {
-                const response = await fetch('/api/level');
-                const data = await response.json();
-                
-                updateDisplay(data);
-                showStatus('Data refreshed successfully', 'success');
-            } catch (error) {
-                console.error('Error fetching data:', error);
-                showStatus('Error fetching data', 'error');
-            }
-        }
-        
-        // Update display with new data
-        function updateDisplay(data) {
-            const level = data.level;
-            const distance = data.distance;
-            
-            // Update level number
-            document.getElementById('levelNumber').textContent = level + '%';
-            
-            // Update progress bar
-            const progressBar = document.getElementById('progressBar');
-            progressBar.style.width = level + '%';
-            document.getElementById('progressText').textContent = level + '%';
-            
-            // Update progress bar color based on level
-            progressBar.className = 'progress-bar';
-            if (level < 20) {
-                progressBar.classList.add('low');
-            } else if (level < 50) {
-                progressBar.classList.add('medium');
-            }
-            
-            // Update distance
-            document.getElementById('distance').textContent = distance.toFixed(1) + ' cm';
-            
-            // Update timestamp
-            const timestamp = new Date(data.timestamp);
-            document.getElementById('lastUpdate').textContent = timestamp.toLocaleTimeString();
-        }
-        
-        // Show status message
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = message;
-            statusDiv.className = 'status ' + type;
-            statusDiv.style.display = 'block';
-            
-            setTimeout(() => {
-                statusDiv.style.display = 'none';
-            }, 3000);
-        }
-        
-        // Show calibration modal
-        function showCalibration() {
-            document.getElementById('calibrationModal').classList.add('show');
-            maxDistanceValue = null;
-            minDistanceValue = null;
-            document.getElementById('maxDistance').textContent = '--';
-            document.getElementById('minDistance').textContent = '--';
-        }
-        
-        // Close calibration modal
-        function closeCalibration() {
-            document.getElementById('calibrationModal').classList.remove('show');
-        }
-        
-        // Measure maximum distance (empty container)
-        async function measureMax() {
-            try {
-                const response = await fetch('/api/calibrate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'measure' })
-                });
-                const data = await response.json();
-                
-                if (data.distance) {
-                    maxDistanceValue = data.distance;
-                    document.getElementById('maxDistance').textContent = 
-                        'Empty: ' + data.distance.toFixed(1) + ' cm';
-                }
-            } catch (error) {
-                console.error('Error measuring:', error);
-                alert('Error taking measurement');
-            }
-        }
-        
-        // Measure minimum distance (full container)
-        async function measureMin() {
-            try {
-                const response = await fetch('/api/calibrate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'measure' })
-                });
-                const data = await response.json();
-                
-                if (data.distance) {
-                    minDistanceValue = data.distance;
-                    document.getElementById('minDistance').textContent = 
-                        'Full: ' + data.distance.toFixed(1) + ' cm';
-                }
-            } catch (error) {
-                console.error('Error measuring:', error);
-                alert('Error taking measurement');
-            }
-        }
-        
-        // Save calibration
-        async function saveCalibration() {
-            if (!maxDistanceValue || !minDistanceValue) {
-                alert('Please complete both measurements first');
-                return;
-            }
-            
-            if (minDistanceValue >= maxDistanceValue) {
-                alert('Error: Full container distance must be less than empty container distance');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/calibrate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'save',
-                        min_distance: minDistanceValue,
-                        max_distance: maxDistanceValue
-                    })
-                });
-                
-                if (response.ok) {
-                    closeCalibration();
-                    showStatus('Calibration saved successfully', 'success');
-                    refreshData();
-                } else {
-                    alert('Error saving calibration');
-                }
-            } catch (error) {
-                console.error('Error saving calibration:', error);
-                alert('Error saving calibration');
-            }
-        }
-        
-        // Settings Functions
-        function showSettings() {
-            loadSettings();
-            document.getElementById('settingsModal').classList.add('show');
-        }
-        
-        function closeSettings() {
-            document.getElementById('settingsModal').classList.remove('show');
-        }
-        
-        async function loadSettings() {
-            try {
-                const response = await fetch('/api/settings');
-                const settings = await response.json();
-                
-                // Load MQTT settings
-                document.getElementById('mqttEnabled').checked = settings.mqtt.enabled;
-                document.getElementById('mqttBroker').value = settings.mqtt.broker;
-                document.getElementById('mqttPort').value = settings.mqtt.port;
-                document.getElementById('mqttTopic').value = settings.mqtt.topic;
-                document.getElementById('mqttUsername').value = settings.mqtt.username;
-                // Security: Don't load password into browser to prevent credential exposure
-                document.getElementById('mqttPassword').value = '';
-                
-                // Load Telegram settings
-                document.getElementById('telegramEnabled').checked = settings.telegram.enabled;
-                document.getElementById('telegramChatId').value = settings.telegram.chat_id;
-                document.getElementById('telegramThreshold').value = settings.telegram.low_level_threshold;
-                // Security: Don't load token into browser to prevent credential exposure
-                document.getElementById('telegramToken').value = '';
-                
-                // Clear test results
-                document.getElementById('mqttTestResult').style.display = 'none';
-                document.getElementById('telegramTestResult').style.display = 'none';
-            } catch (error) {
-                console.error('Error loading settings:', error);
-                alert('Error loading settings');
-            }
-        }
-        
-        async function testMqtt() {
-            const resultDiv = document.getElementById('mqttTestResult');
-            resultDiv.style.display = 'block';
-            resultDiv.textContent = 'Testing connection...';
-            resultDiv.className = 'test-result';
-            
-            try {
-                const response = await fetch('/api/settings/test/mqtt', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        broker: document.getElementById('mqttBroker').value,
-                        port: document.getElementById('mqttPort').value,
-                        username: document.getElementById('mqttUsername').value,
-                        password: document.getElementById('mqttPassword').value
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    resultDiv.textContent = '✓ ' + result.message;
-                    resultDiv.classList.add('success');
-                } else {
-                    resultDiv.textContent = '✗ ' + result.error;
-                    resultDiv.classList.add('error');
-                }
-            } catch (error) {
-                resultDiv.textContent = '✗ Connection test failed: ' + error.message;
-                resultDiv.classList.add('error');
-            }
-        }
-        
-        async function testTelegram() {
-            const resultDiv = document.getElementById('telegramTestResult');
-            const token = document.getElementById('telegramToken').value;
-            
-            if (!token) {
-                resultDiv.style.display = 'block';
-                resultDiv.textContent = '⚠ Please enter a bot token to test';
-                resultDiv.className = 'test-result error';
-                return;
-            }
-            
-            resultDiv.style.display = 'block';
-            resultDiv.textContent = 'Testing bot...';
-            resultDiv.className = 'test-result';
-            
-            try {
-                const response = await fetch('/api/settings/test/telegram', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        bot_token: token
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    resultDiv.textContent = '✓ ' + result.message;
-                    resultDiv.classList.add('success');
-                } else {
-                    resultDiv.textContent = '✗ ' + result.error;
-                    resultDiv.classList.add('error');
-                }
-            } catch (error) {
-                resultDiv.textContent = '✗ Bot test failed: ' + error.message;
-                resultDiv.classList.add('error');
-            }
-        }
-        
-        async function saveSettings() {
-            try {
-                // Save MQTT settings
-                const mqttData = {
-                    enabled: document.getElementById('mqttEnabled').checked,
-                    broker: document.getElementById('mqttBroker').value,
-                    port: document.getElementById('mqttPort').value,
-                    topic: document.getElementById('mqttTopic').value,
-                    username: document.getElementById('mqttUsername').value
-                };
-                
-                const mqttPassword = document.getElementById('mqttPassword').value;
-                if (mqttPassword) {
-                    mqttData.password = mqttPassword;
-                }
-                
-                const mqttResponse = await fetch('/api/settings/mqtt', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(mqttData)
-                });
-                
-                if (!mqttResponse.ok) {
-                    throw new Error('Failed to save MQTT settings');
-                }
-                
-                // Save Telegram settings
-                const telegramData = {
-                    enabled: document.getElementById('telegramEnabled').checked,
-                    chat_id: document.getElementById('telegramChatId').value,
-                    low_level_threshold: document.getElementById('telegramThreshold').value
-                };
-                
-                const telegramToken = document.getElementById('telegramToken').value;
-                if (telegramToken) {
-                    telegramData.bot_token = telegramToken;
-                }
-                
-                const telegramResponse = await fetch('/api/settings/telegram', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(telegramData)
-                });
-                
-                if (!telegramResponse.ok) {
-                    throw new Error('Failed to save Telegram settings');
-                }
-                
-                closeSettings();
-                showStatus('Settings saved successfully', 'success');
-            } catch (error) {
-                console.error('Error saving settings:', error);
-                alert('Error saving settings: ' + error.message);
-            }
-        }
-        
-        // Auto-refresh every 30 seconds
-        setInterval(refreshData, 30000);
-        
-        // Initial data load
-        refreshData();
-    </script>
+  </div>
+
+  <div class="row">
+    <button class="primary" id="btnRefresh">Actualiser</button>
+    <button id="btnCal">Calibrer</button>
+    <button id="btnCfg">Réglages</button>
+  </div>
+  <div class="msg" id="msg"></div>
+</main>
+
+<dialog id="calDlg">
+  <h2>Calibration</h2>
+  <p class="hint">Videz la trémie, mesurez. Remplissez-la, mesurez. Le capteur voit la
+     surface des croquettes : plus elles sont hautes, plus la distance est courte.</p>
+  <label>Trémie vide (cm)<span><input type="number" step="0.1" id="empty_cm">
+     <button style="flex:0" data-measure="empty_cm">Mesurer</button></span></label>
+  <label>Trémie pleine (cm)<span><input type="number" step="0.1" id="full_cm">
+     <button style="flex:0" data-measure="full_cm">Mesurer</button></span></label>
+  <div class="msg" id="calMsg"></div>
+  <div class="row">
+    <button class="primary" data-save="calDlg">Enregistrer</button>
+    <button data-close="calDlg">Annuler</button>
+  </div>
+</dialog>
+
+<dialog id="cfgDlg">
+  <h2>Réglages</h2>
+  <fieldset><legend>Capteur</legend>
+    <label>Intervalle (s)<input type="number" min="5" id="interval_s"></label>
+    <label>Mesures par cycle<input type="number" min="1" max="21" id="samples"></label>
+    <label>Broche TRIG<input type="number" id="trigger_pin"></label>
+    <label>Broche ECHO<input type="number" id="echo_pin"></label>
+  </fieldset>
+  <fieldset><legend>MQTT</legend>
+    <label>Activer<input type="checkbox" id="mqtt_enabled"></label>
+    <label>Hôte<input type="text" id="mqtt_host"></label>
+    <label>Port<input type="number" id="mqtt_port"></label>
+    <label>Sujet<input type="text" id="mqtt_topic"></label>
+  </fieldset>
+  <fieldset><legend>Telegram</legend>
+    <label>Activer<input type="checkbox" id="tg_enabled"></label>
+    <label>Seuil d'alerte (%)<input type="number" min="0" max="100" id="threshold_pct"></label>
+    <label>Silence entre alertes (s)<input type="number" min="60" id="cooldown_s"></label>
+    <p class="hint">Identifiants MQTT et jeton Telegram : variables d'environnement du
+       service, pas ici.</p>
+  </fieldset>
+  <div class="msg" id="cfgMsg"></div>
+  <div class="row">
+    <button class="primary" data-save="cfgDlg">Enregistrer</button>
+    <button data-close="cfgDlg">Annuler</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Table unique champ -> chemin dans la config : remplace tous les get/setElementById
+// dupliqués entre le chargement et l'enregistrement des réglages.
+const FIELDS = {
+  full_cm: "calibration.full_cm", empty_cm: "calibration.empty_cm",
+  interval_s: "sensor.interval_s", samples: "sensor.samples",
+  trigger_pin: "sensor.trigger_pin", echo_pin: "sensor.echo_pin",
+  mqtt_enabled: "mqtt.enabled", mqtt_host: "mqtt.host",
+  mqtt_port: "mqtt.port", mqtt_topic: "mqtt.topic",
+  tg_enabled: "telegram.enabled", threshold_pct: "telegram.threshold_pct",
+  cooldown_s: "telegram.cooldown_s",
+};
+const dig = (obj, path) => path.split(".").reduce((o, k) => o?.[k], obj);
+const token = new URLSearchParams(location.search).get("token") || "";
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Token": token },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function say(el, text, kind = "") {
+  el.textContent = text;
+  el.className = "msg " + kind;
+  if (kind === "ok") setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3000);
+}
+
+let config = null;
+
+function render(s) {
+  config = s.config;
+  const stale = !s.measured_at ||
+    (Date.now() - Date.parse(s.measured_at)) / 1000 > s.config.sensor.interval_s * 2 + 30;
+  const lvl = s.level;
+  $("gauge").classList.toggle("stale", stale || lvl === null);
+  $("pct").textContent = lvl === null ? "--" : Math.round(lvl);
+  $("fill").style.height = (lvl ?? 0) + "%";
+  document.documentElement.style.setProperty("--accent",
+    lvl === null ? "var(--dim)" : lvl < s.config.telegram.threshold_pct ? "var(--low)"
+    : lvl < 50 ? "var(--warn)" : "var(--ok)");
+  $("sub").textContent = !s.measured_at ? "en attente de mesure"
+    : `${s.distance_cm} cm · ${new Date(s.measured_at).toLocaleTimeString("fr-FR")}` +
+      (stale ? " · capteur muet" : "");
+  $("mqttDot").classList.toggle("on", s.mqtt_connected);
+  for (const [id, path] of Object.entries(FIELDS)) {
+    const el = $(id), val = dig(config, path);
+    if (el.type === "checkbox") el.checked = val; else el.value = val;
+  }
+}
+
+function collect() {
+  const patch = {};
+  for (const [id, path] of Object.entries(FIELDS)) {
+    const el = $(id), [group, key] = path.split(".");
+    (patch[group] ??= {})[key] =
+      el.type === "checkbox" ? el.checked :
+      el.type === "number" ? el.valueAsNumber : el.value;
+  }
+  return patch;
+}
+
+const refresh = () => api("/api/status").then(render)
+  .catch(e => say($("msg"), "Serveur injoignable : " + e.message, "err"));
+
+$("btnRefresh").onclick = refresh;
+$("btnCal").onclick = () => $("calDlg").showModal();
+$("btnCfg").onclick = () => $("cfgDlg").showModal();
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.close) $(b.dataset.close).close(), refresh();
+  if (b.dataset.measure) {                       // une seule fonction pour les deux mesures
+    say($("calMsg"), "Mesure en cours…");
+    try {
+      const { distance_cm } = await api("/api/measure", {});
+      if (distance_cm === null) return say($("calMsg"), "Pas d'écho. Vérifiez le câblage.", "err");
+      $(b.dataset.measure).value = distance_cm;
+      say($("calMsg"), `${distance_cm} cm relevés.`, "ok");
+    } catch (err) { say($("calMsg"), err.message, "err"); }
+  }
+  if (b.dataset.save) {                          // une seule fonction pour les deux dialogues
+    const dlg = b.dataset.save;
+    try {
+      await api("/api/config", collect());
+      await refresh();
+      $(dlg).close();
+      say($("msg"), "Réglages enregistrés.", "ok");
+    } catch (err) { say($(dlg === "calDlg" ? "calMsg" : "cfgMsg"), err.message, "err"); }
+  }
+});
+
+refresh();
+setInterval(refresh, 15000);   // lecture du cache serveur : ne déclenche aucune mesure
+</script>
 </body>
 </html>
