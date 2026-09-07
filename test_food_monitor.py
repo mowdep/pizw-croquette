@@ -216,6 +216,35 @@ def test_publish_sans_broker_ne_leve_pas():
     fm.publish(cfg(), 42.0, 19.5)
 
 
+def test_discovery_home_assistant():
+    """Les templates doivent pointer sur les champs réellement publiés par publish()."""
+    publie = []
+    faux = type("Faux", (), {"publish": lambda s, t, p, retain: publie.append((t, p))})()
+    conf = cfg(mqtt={"topic": "maison/croquettes"})
+    fm.publish_discovery(faux, conf)
+
+    topics = dict(publie)
+    assert set(topics) == {"homeassistant/sensor/croquettes/level/config",
+                           "homeassistant/sensor/croquettes/distance/config"}
+
+    # Le payload d'état réellement émis, pour confronter les templates à la réalité.
+    fm._mqtt, etat = faux, None
+    fm.STATE["measured_at"] = "2026-08-24T10:00:00+00:00"
+    try:
+        fm.publish(conf, 42.0, 19.5)
+        etat = json.loads(publie[-1][1])
+    finally:
+        fm._mqtt = None
+
+    for topic, payload in topics.items():
+        d = json.loads(payload)
+        assert d["state_topic"] == "maison/croquettes"      # suit le topic configuré
+        assert d["device"]["identifiers"] == ["pizw_croquette"]
+        champ = d["value_template"].strip("{} ").removeprefix("value_json.")
+        assert champ in etat, f"{topic} pointe sur {champ}, absent du payload {list(etat)}"
+    assert len({json.loads(p)["unique_id"] for p in topics.values()}) == 2
+
+
 # ---------------------------------------------------------------------- API
 
 def test_api_etat_initial_et_absence_de_secrets():

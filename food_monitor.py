@@ -160,6 +160,30 @@ def level_pct(distance: float | None, cal: dict) -> float | None:
 
 # ------------------------------------------------------------------- sorties
 
+# Auto-découverte Home Assistant : HA crée les entités seul, aucun YAML à maintenir.
+# Republié à chaque connexion — un broker qui perd ses retains se resynchronise.
+HA_SENSORS = {
+    "level":    ("Niveau croquettes",   "%",  "mdi:bowl-mix",             "level"),
+    "distance": ("Distance croquettes", "cm", "mdi:arrow-expand-vertical", "distance_cm"),
+}
+
+
+def publish_discovery(client, cfg: dict) -> None:
+    device = {"identifiers": ["pizw_croquette"], "name": "Croquettes",
+              "manufacturer": "mowdep", "model": "HC-SR04 / Pi Zero W"}
+    for cle, (nom, unite, icone, champ) in HA_SENSORS.items():
+        client.publish(f"homeassistant/sensor/croquettes/{cle}/config", json.dumps({
+            "name": nom,
+            "unique_id": f"croquettes_{cle}",
+            "state_topic": cfg["mqtt"]["topic"],
+            "value_template": f"{{{{ value_json.{champ} }}}}",
+            "unit_of_measurement": unite,
+            "icon": icone,
+            "state_class": "measurement",
+            "device": device,
+        }), retain=True)
+
+
 def apply_mqtt(cfg: dict) -> None:
     global _mqtt
     if _mqtt:
@@ -175,7 +199,11 @@ def apply_mqtt(cfg: dict) -> None:
         client = mqtt.Client()                                  # paho 1.x
     if cfg["mqtt"]["username"]:
         client.username_pw_set(cfg["mqtt"]["username"], cfg["mqtt"]["password"])
-    client.on_connect = lambda *_: STATE.update(mqtt_connected=True)
+    def on_connect(client, *_):
+        STATE["mqtt_connected"] = True
+        publish_discovery(client, cfg)
+
+    client.on_connect = on_connect
     client.on_disconnect = lambda *_: STATE.update(mqtt_connected=False)
     # connect_async : le démarrage ne dépend plus du broker, et paho reconnecte seul.
     client.connect_async(cfg["mqtt"]["host"], cfg["mqtt"]["port"], 60)
