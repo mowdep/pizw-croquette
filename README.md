@@ -3,8 +3,9 @@
 Niveau de croquettes mesuré par HC-SR04 sur Raspberry Pi Zero WH. Interface web,
 publication MQTT, alerte Telegram.
 
-Un seul thread interroge le capteur ; le web sert un cache. Les secrets vivent
-dans l'environnement, jamais dans un fichier de l'application.
+Un seul thread interroge le capteur ; le web sert un cache. Projet IoT local,
+sans authentification : tout se règle depuis l'interface, identifiants
+MQTT/Telegram inclus.
 
 ## Câblage
 
@@ -23,7 +24,6 @@ python3 -m venv .venv                      # PEP 668 : pip refuse le système
 .venv/bin/pip install -r requirements.txt
 
 cp config.example.json config.json
-cp env.example .env && chmod 600 .env      # y mettre au moins FOOD_MONITOR_TOKEN
 ```
 
 ## Vérifier avant de déployer
@@ -45,8 +45,9 @@ sudo systemctl enable --now food-monitor
 journalctl -u food-monitor -f
 ```
 
-Interface sur `http://<ip-du-pi>:5000`. Avec un jeton configuré, l'ouvrir avec
-`?token=...` pour pouvoir modifier les réglages ; sans jeton, la lecture reste libre.
+Interface sur `http://<ip-du-pi>:5000`. Pas d'authentification : quiconque sur le
+réseau local peut lire et modifier les réglages — cohérent pour un projet IoT
+personnel, pas à exposer tel quel sur Internet.
 
 ## Calibration
 
@@ -55,26 +56,23 @@ voit la surface des croquettes : plus elles sont hautes, plus la distance est co
 
 ## Configuration
 
-`config.json` contient uniquement des réglages non sensibles ; il est modifiable
-depuis l'interface. Les clés absentes reprennent leur valeur par défaut, les clés
-inconnues sont ignorées, les types sont convertis.
+`config.json` contient tous les réglages, identifiants MQTT/Telegram compris, et
+se modifie depuis l'interface. Les clés absentes reprennent leur valeur par
+défaut, les clés inconnues sont ignorées, les types sont convertis. Le fichier
+est écrit en 0600 (identifiants en clair dedans) et jamais commité (`.gitignore`).
 
-Les secrets passent par `.env`, chargé par systemd (`EnvironmentFile`) :
+Utilisateur/mot de passe MQTT vides = connexion anonyme. Jeton bot et
+identifiant de chat Telegram vides = alertes désactivées même si `enabled: true`.
 
-| Variable | Rôle |
-|---|---|
-| `FOOD_MONITOR_TOKEN` | Requis pour écrire la config. Absent = tout le LAN peut écrire. |
-| `MQTT_USERNAME`, `MQTT_PASSWORD` | Broker, si authentifié |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Alertes |
-| `FOOD_MONITOR_FAKE=1` | Capteur simulé, pour développer sans Pi |
+`FOOD_MONITOR_FAKE=1` : capteur simulé, pour développer sans Pi.
 
 ## API
 
 | Route | |
 |---|---|
-| `GET /api/status` | Niveau, distance, horodatage **de la mesure**, état MQTT, config |
-| `POST /api/config` | Patch partiel, validé en bloc. Jeton requis. |
-| `POST /api/measure` | Une mesure immédiate, pour la calibration. Jeton requis. |
+| `GET /api/status` | Niveau, distance, horodatage **de la mesure**, état MQTT, config (identifiants réduits à un booléen) |
+| `POST /api/config` | Patch partiel, validé en bloc. Un champ identifiant laissé vide dans l'UI n'écrase pas la valeur existante. |
+| `POST /api/measure` | Une mesure immédiate, pour la calibration. |
 
 `level` vaut `null` quand aucune mesure valide n'est disponible — jamais 0.
 `measured_at` date la mesure, pas la requête : c'est ce qui rend une panne de

@@ -5,7 +5,6 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=/opt/pizw-croquette
-EnvironmentFile=/opt/pizw-croquette/.env
 ExecStart=/opt/pizw-croquette/.venv/bin/python food_monitor.py
 Restart=always
 RestartSec=5

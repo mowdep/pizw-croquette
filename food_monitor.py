@@ -2,7 +2,8 @@
 """Niveau de croquettes — HC-SR04 sur Raspberry Pi Zero WH.
 
 Un seul thread mesure. Le web ne fait que lire l'état en cache.
-Les secrets viennent de l'environnement, jamais du disque applicatif.
+Projet IoT local, sans authentification : tout se règle depuis l'interface,
+identifiants MQTT/Telegram inclus, stockés dans config.json.
 """
 from __future__ import annotations
 
@@ -31,20 +32,22 @@ else:
 log = logging.getLogger("croquette")
 
 CONFIG_PATH = Path(os.getenv("FOOD_MONITOR_CONFIG", "config.json"))
-ADMIN_TOKEN = os.getenv("FOOD_MONITOR_TOKEN")
 
 # DEFAULTS sert de schéma : il fixe les clés ET les types. Voir coerce().
+# username/password/bot_token/chat_id vivent ici comme le reste : pas d'auth sur ce
+# projet, réseau local uniquement — inutile de séparer un fichier de secrets.
 DEFAULTS = {
     "sensor": {"trigger_pin": 23, "echo_pin": 24, "interval_s": 60, "samples": 5},
     "calibration": {"full_cm": 5.0, "empty_cm": 30.0},
     "mqtt": {"enabled": False, "host": "localhost", "port": 1883,
-             "topic": "home/croquettes/level"},
-    "telegram": {"enabled": False, "threshold_pct": 20, "cooldown_s": 3600},
+             "topic": "home/croquettes/level", "username": "", "password": ""},
+    "telegram": {"enabled": False, "threshold_pct": 20, "cooldown_s": 3600,
+                 "bot_token": "", "chat_id": ""},
     "web": {"host": "0.0.0.0", "port": 5000},
 }
 
-SECRETS = {k: os.getenv(k) for k in
-           ("MQTT_USERNAME", "MQTT_PASSWORD", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")}
+CREDENTIAL_FIELDS = (("mqtt", "username"), ("mqtt", "password"),
+                     ("telegram", "bot_token"), ("telegram", "chat_id"))
 
 SPEED_OF_SOUND_CM_S = 34300
 RANGE_CM = (2.0, 400.0)          # hors de cette plage, le HC-SR04 raconte n'importe quoi
@@ -102,7 +105,16 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     tmp = CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.chmod(0o600)          # contient les identifiants MQTT/Telegram en clair
     tmp.replace(CONFIG_PATH)  # écriture atomique : pas de config tronquée après coupure
+
+
+def redact(cfg: dict) -> dict:
+    """Config avec les identifiants réduits à un booléen : jamais renvoyés en clair sur le réseau."""
+    out = json.loads(json.dumps(cfg))
+    for section, key in CREDENTIAL_FIELDS:
+        out[section][key] = bool(cfg[section][key])
+    return out
 
 
 # ---------------------------------------------------------------------- capteur
@@ -161,8 +173,8 @@ def apply_mqtt(cfg: dict) -> None:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)  # paho >= 2
     except AttributeError:
         client = mqtt.Client()                                  # paho 1.x
-    if SECRETS["MQTT_USERNAME"]:
-        client.username_pw_set(SECRETS["MQTT_USERNAME"], SECRETS["MQTT_PASSWORD"] or "")
+    if cfg["mqtt"]["username"]:
+        client.username_pw_set(cfg["mqtt"]["username"], cfg["mqtt"]["password"])
     client.on_connect = lambda *_: STATE.update(mqtt_connected=True)
     client.on_disconnect = lambda *_: STATE.update(mqtt_connected=False)
     # connect_async : le démarrage ne dépend plus du broker, et paho reconnecte seul.
@@ -179,11 +191,10 @@ def publish(cfg: dict, level: float, distance: float) -> None:
     _mqtt.publish(cfg["mqtt"]["topic"], payload, retain=True)
 
 
-def telegram(text: str) -> None:
-    token, chat = SECRETS["TELEGRAM_BOT_TOKEN"], SECRETS["TELEGRAM_CHAT_ID"]
+def telegram(tg: dict, text: str) -> None:
     try:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                      json={"chat_id": chat, "text": text}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage",
+                      json={"chat_id": tg["chat_id"], "text": text}, timeout=10)
     except requests.RequestException as exc:
         log.warning("Telegram : %s", exc)
 
@@ -191,15 +202,15 @@ def telegram(text: str) -> None:
 def notify(cfg: dict, level: float) -> None:
     """Alerte sur front descendant, avec hystérésis : pas de spam autour du seuil."""
     tg = cfg["telegram"]
-    if not (tg["enabled"] and SECRETS["TELEGRAM_BOT_TOKEN"] and SECRETS["TELEGRAM_CHAT_ID"]):
+    if not (tg["enabled"] and tg["bot_token"] and tg["chat_id"]):
         return
     now = time.monotonic()
     if level < tg["threshold_pct"]:
         if not _alert["active"] or now - _alert["sent_at"] > tg["cooldown_s"]:
-            telegram(f"Croquettes : {level} %. Il faut remplir.")
+            telegram(tg, f"Croquettes : {level} %. Il faut remplir.")
             _alert.update(active=True, sent_at=now)
     elif _alert["active"] and level >= tg["threshold_pct"] + 10:
-        telegram(f"Gamelle remplie : {level} %.")
+        telegram(tg, f"Gamelle remplie : {level} %.")
         _alert["active"] = False
 
 
@@ -231,13 +242,6 @@ def monitoring_loop() -> None:
 app = Flask(__name__)
 
 
-def protected():
-    """401 si un jeton est configuré et absent de la requête."""
-    if ADMIN_TOKEN and request.headers.get("X-Token") != ADMIN_TOKEN:
-        return jsonify(error="Jeton invalide."), 401
-    return None
-
-
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -245,19 +249,16 @@ def index():
 
 @app.get("/api/status")
 def api_status():
-    # CONFIG ne contient aucun secret : il part tel quel, sans filtrage manuel.
-    return jsonify({**STATE, "config": CONFIG, "protected": bool(ADMIN_TOKEN)})
+    return jsonify({**STATE, "config": redact(CONFIG)})
 
 
 @app.post("/api/measure")
 def api_measure():
-    return protected() or jsonify(distance_cm=measure(CONFIG))
+    return jsonify(distance_cm=measure(CONFIG))
 
 
 @app.post("/api/config")
 def api_config():
-    if (deny := protected()):
-        return deny
     global CONFIG
     try:
         candidate = coerce(CONFIG, request.get_json(silent=True) or {})
@@ -269,16 +270,13 @@ def api_config():
     save_config(CONFIG)
     if mqtt_changed:
         apply_mqtt(CONFIG)
-    return jsonify(config=CONFIG)
+    return jsonify(config=redact(CONFIG))
 
 
 def main() -> None:
     global CONFIG
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     CONFIG = load_config()
-    if not ADMIN_TOKEN:
-        log.warning("FOOD_MONITOR_TOKEN absent : l'interface est modifiable sans "
-                    "authentification par tout le réseau local.")
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(CONFIG["sensor"]["trigger_pin"], GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(CONFIG["sensor"]["echo_pin"], GPIO.IN)

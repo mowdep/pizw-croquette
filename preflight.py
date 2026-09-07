@@ -120,20 +120,15 @@ def check_broches_libres(cfg):
 # ------------------------------------------------------------------ secrets
 
 def check_secrets(cfg):
-    env = Path(".env")
-    if env.exists():
-        mode = env.stat().st_mode & 0o777
+    cfgpath = Path("config.json")
+    if cfgpath.exists():
+        mode = cfgpath.stat().st_mode & 0o777
         (ok if mode == 0o600 else warn)(
-            f".env en {oct(mode)}", "" if mode == 0o600 else "chmod 600 .env")
-    if not os.getenv("FOOD_MONITOR_TOKEN"):
-        warn("FOOD_MONITOR_TOKEN absent",
-             "Tout le réseau local pourra modifier la configuration.")
-    else:
-        ok("jeton d'administration défini")
-    if cfg["telegram"]["enabled"] and not (os.getenv("TELEGRAM_BOT_TOKEN")
-                                           and os.getenv("TELEGRAM_CHAT_ID")):
+            f"config.json en {oct(mode)}",
+            "" if mode == 0o600 else "chmod 600 config.json — identifiants MQTT/Telegram en clair dedans.")
+    if cfg["telegram"]["enabled"] and not (cfg["telegram"]["bot_token"] and cfg["telegram"]["chat_id"]):
         fail("Telegram activé sans identifiants",
-             "Renseigner TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env.")
+             "Renseigner le jeton du bot et l'identifiant de chat depuis l'interface web.")
 
 
 # ------------------------------------------------------------------ capteur
@@ -231,8 +226,8 @@ def check_mqtt(cfg):
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     except AttributeError:
         client = mqtt.Client()
-    if os.getenv("MQTT_USERNAME"):
-        client.username_pw_set(os.getenv("MQTT_USERNAME"), os.getenv("MQTT_PASSWORD") or "")
+    if cfg["mqtt"]["username"]:
+        client.username_pw_set(cfg["mqtt"]["username"], cfg["mqtt"]["password"])
     try:
         client.connect(cfg["mqtt"]["host"], cfg["mqtt"]["port"], 5)
         client.disconnect()
@@ -242,12 +237,12 @@ def check_mqtt(cfg):
 
 
 def check_telegram(cfg):
-    if not (cfg["telegram"]["enabled"] and os.getenv("TELEGRAM_BOT_TOKEN")):
+    if not (cfg["telegram"]["enabled"] and cfg["telegram"]["bot_token"]):
         return
     import requests
     try:
         r = requests.get(
-            f"https://api.telegram.org/bot{os.getenv('TELEGRAM_BOT_TOKEN')}/getMe", timeout=10)
+            f"https://api.telegram.org/bot{cfg['telegram']['bot_token']}/getMe", timeout=10)
         corps = r.json()
         if corps.get("ok"):
             ok(f"bot Telegram @{corps['result']['username']}")

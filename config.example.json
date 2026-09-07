@@ -10,15 +10,19 @@
     "empty_cm": 30.0
   },
   "mqtt": {
-    "enabled": true,
+    "enabled": false,
     "host": "localhost",
     "port": 1883,
-    "topic": "home/croquettes/level"
+    "topic": "home/croquettes/level",
+    "username": "",
+    "password": ""
   },
   "telegram": {
     "enabled": false,
     "threshold_pct": 20,
-    "cooldown_s": 3600
+    "cooldown_s": 3600,
+    "bot_token": "",
+    "chat_id": ""
   },
   "web": {
     "host": "0.0.0.0",

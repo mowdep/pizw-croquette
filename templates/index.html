@@ -60,7 +60,7 @@
            letter-spacing: .05em; padding-right: 8px; }
   label { display: flex; justify-content: space-between; align-items: center;
           gap: 12px; margin: 9px 0; font-size: 14px; }
-  input[type=text], input[type=number] {
+  input[type=text], input[type=number], input[type=password] {
     width: 120px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px;
     background: #0f1114; color: var(--ink); font: 13px var(--mono); text-align: right;
   }
@@ -124,13 +124,17 @@
     <label>Hôte<input type="text" id="mqtt_host"></label>
     <label>Port<input type="number" id="mqtt_port"></label>
     <label>Sujet<input type="text" id="mqtt_topic"></label>
+    <label>Utilisateur<input type="text" id="mqtt_username" autocomplete="off"></label>
+    <label>Mot de passe<input type="password" id="mqtt_password" autocomplete="off"></label>
   </fieldset>
   <fieldset><legend>Telegram</legend>
     <label>Activer<input type="checkbox" id="tg_enabled"></label>
     <label>Seuil d'alerte (%)<input type="number" min="0" max="100" id="threshold_pct"></label>
     <label>Silence entre alertes (s)<input type="number" min="60" id="cooldown_s"></label>
-    <p class="hint">Identifiants MQTT et jeton Telegram : variables d'environnement du
-       service, pas ici.</p>
+    <label>Jeton bot<input type="password" id="tg_bot_token" autocomplete="off"></label>
+    <label>Identifiant chat<input type="text" id="tg_chat_id" autocomplete="off"></label>
+    <p class="hint">Champs identifiants : vides = inchangés. Jamais réaffichés après
+       enregistrement.</p>
   </fieldset>
   <div class="msg" id="cfgMsg"></div>
   <div class="row">
@@ -150,18 +154,23 @@ const FIELDS = {
   trigger_pin: "sensor.trigger_pin", echo_pin: "sensor.echo_pin",
   mqtt_enabled: "mqtt.enabled", mqtt_host: "mqtt.host",
   mqtt_port: "mqtt.port", mqtt_topic: "mqtt.topic",
+  mqtt_username: "mqtt.username", mqtt_password: "mqtt.password",
   tg_enabled: "telegram.enabled", threshold_pct: "telegram.threshold_pct",
   cooldown_s: "telegram.cooldown_s",
+  tg_bot_token: "telegram.bot_token", tg_chat_id: "telegram.chat_id",
 };
+// Le serveur ne renvoie qu'un booléen pour ces champs (jamais la valeur en clair) :
+// jamais pré-remplis, et un champ laissé vide ne doit pas écraser l'identifiant existant.
+const CREDENTIAL_FIELDS = new Set(["mqtt_username", "mqtt_password", "tg_bot_token", "tg_chat_id"]);
 const dig = (obj, path) => path.split(".").reduce((o, k) => o?.[k], obj);
-const token = new URLSearchParams(location.search).get("token") || "";
 
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? undefined : {
+  const opts = body === undefined ? undefined : {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Token": token },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  };
+  const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
@@ -192,14 +201,18 @@ function render(s) {
   $("mqttDot").classList.toggle("on", s.mqtt_connected);
   for (const [id, path] of Object.entries(FIELDS)) {
     const el = $(id), val = dig(config, path);
-    if (el.type === "checkbox") el.checked = val; else el.value = val;
+    if (CREDENTIAL_FIELDS.has(id)) { el.value = ""; el.placeholder = val ? "•••• déjà défini" : "non défini"; }
+    else if (el.type === "checkbox") el.checked = val;
+    else el.value = val;
   }
 }
 
 function collect() {
   const patch = {};
   for (const [id, path] of Object.entries(FIELDS)) {
-    const el = $(id), [group, key] = path.split(".");
+    const el = $(id);
+    if (CREDENTIAL_FIELDS.has(id) && !el.value) continue;   // vide = identifiant inchangé
+    const [group, key] = path.split(".");
     (patch[group] ??= {})[key] =
       el.type === "checkbox" ? el.checked :
       el.type === "number" ? el.valueAsNumber : el.value;

@@ -172,12 +172,12 @@ def test_level_pct():
 def test_notify_hysteresis():
     """Une alerte, un retour à la normale, une alerte. Pas un message par cycle."""
     envoyes = []
-    reel, fm.telegram = fm.telegram, lambda text: envoyes.append(text)
-    fm.SECRETS.update(TELEGRAM_BOT_TOKEN="x", TELEGRAM_CHAT_ID="y")
+    reel, fm.telegram = fm.telegram, lambda tg, text: envoyes.append(text)
     fm._alert.update(active=False, sent_at=0.0)
     try:
         for level in (50, 19, 18, 15, 22, 35, 10):
-            fm.notify(cfg(telegram={"enabled": True, "threshold_pct": 20}), level)
+            fm.notify(cfg(telegram={"enabled": True, "threshold_pct": 20,
+                                     "bot_token": "x", "chat_id": "y"}), level)
     finally:
         fm.telegram = reel
     assert len(envoyes) == 3, envoyes
@@ -186,14 +186,12 @@ def test_notify_hysteresis():
 
 def test_notify_muet_sans_secret():
     envoyes = []
-    reel, fm.telegram = fm.telegram, lambda text: envoyes.append(text)
-    fm.SECRETS.update(TELEGRAM_BOT_TOKEN=None, TELEGRAM_CHAT_ID=None)
+    reel, fm.telegram = fm.telegram, lambda tg, text: envoyes.append(text)
     fm._alert.update(active=False, sent_at=0.0)
     try:
-        fm.notify(cfg(telegram={"enabled": True, "threshold_pct": 20}), 5)
+        fm.notify(cfg(telegram={"enabled": True, "threshold_pct": 20}), 5)  # bot_token/chat_id vides
     finally:
         fm.telegram = reel
-        fm.SECRETS.update(TELEGRAM_BOT_TOKEN="x", TELEGRAM_CHAT_ID="y")
     assert envoyes == []
 
 
@@ -221,12 +219,16 @@ def test_publish_sans_broker_ne_leve_pas():
 # ---------------------------------------------------------------------- API
 
 def test_api_etat_initial_et_absence_de_secrets():
-    fm.CONFIG = fm.load_config()
+    """Pas d'auth sur ce projet, mais les identifiants ne doivent jamais transiter en clair."""
+    fm.CONFIG = fm.coerce(fm.DEFAULTS, {"mqtt": {"username": "gabriel-user", "password": "s3cr3t-pass"},
+                                        "telegram": {"bot_token": "999:BOTTOKEN", "chat_id": "chat-id-777"}})
     fm.STATE.update(level=None, distance_cm=None, measured_at=None)
     corps = fm.app.test_client().get("/api/status").get_json()
     assert corps["level"] is None and corps["measured_at"] is None
-    for interdit in ("password", "token", "chat_id", "username"):
-        assert interdit not in json.dumps(corps).lower()
+    for secret in ("gabriel-user", "s3cr3t-pass", "999:BOTTOKEN", "chat-id-777"):
+        assert secret not in json.dumps(corps)
+    assert corps["config"]["mqtt"]["username"] is True     # présence, jamais la valeur
+    assert corps["config"]["telegram"]["bot_token"] is True
 
 
 def test_api_config_valide_et_persiste():
@@ -245,19 +247,15 @@ def test_api_config_supporte_les_strings_du_navigateur():
     assert r.status_code == 200 and fm.CONFIG["sensor"]["interval_s"] == 120
 
 
-def test_api_jeton():
-    fm.CONFIG = fm.load_config()
-    fm.ADMIN_TOKEN = "secret"
+def test_api_config_champ_identifiant_omis_ne_l_efface_pas():
+    """L'UI ne renvoie jamais un champ identifiant laissé vide : l'omission doit préserver."""
+    fm.CONFIG = fm.coerce(fm.DEFAULTS, {"mqtt": {"username": "gabriel-user", "password": "s3cr3t-pass"}})
     client = fm.app.test_client()
-    try:
-        assert client.post("/api/config", json={}).status_code == 401
-        assert client.post("/api/measure", json={}).status_code == 401
-        assert client.get("/api/status").status_code == 200      # lecture libre
-        with sensor():
-            r = client.post("/api/measure", json={}, headers={"X-Token": "secret"})
-        assert r.status_code == 200 and r.get_json()["distance_cm"] is not None
-    finally:
-        fm.ADMIN_TOKEN = None
+    r = client.post("/api/config", json={"mqtt": {"host": "192.168.1.50"}})
+    assert r.status_code == 200
+    assert fm.CONFIG["mqtt"]["host"] == "192.168.1.50"
+    assert fm.CONFIG["mqtt"]["username"] == "gabriel-user"   # pas dans le patch : inchangé
+    assert r.get_json()["config"]["mqtt"]["password"] is True  # jamais réaffiché en clair
 
 
 def test_page_html_se_rend():
