@@ -15,7 +15,7 @@ AMS1117 ne peut pas servir d'adaptateur de niveau pour ECHO.
 
 ```bash
 sudo useradd -r -G gpio -d /opt/pizw-croquette croquette
-sudo git clone -b copilot/add-hcsr04-food-dispenser \
+sudo git clone -b refonte/hcsr04 \
      https://github.com/mowdep/pizw-croquette /opt/pizw-croquette
 cd /opt/pizw-croquette
 

@@ -1,8 +1,4 @@
 config.json
-calibration.json
-credentials.enc
-.salt
-.machine_id
 __pycache__/
 *.pyc
 *.pyo

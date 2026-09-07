@@ -2,25 +2,23 @@
   "sensor": {
     "trigger_pin": 23,
     "echo_pin": 24,
-    "measurement_interval": 60
+    "interval_s": 60,
+    "samples": 5
   },
   "calibration": {
-    "max_distance_cm": 30,
-    "min_distance_cm": 5
+    "full_cm": 5.0,
+    "empty_cm": 30.0
   },
   "mqtt": {
     "enabled": true,
-    "broker": "localhost",
+    "host": "localhost",
     "port": 1883,
-    "username": "",
-    "password": "",
-    "topic": "home/food_dispenser/level"
+    "topic": "home/croquettes/level"
   },
   "telegram": {
     "enabled": false,
-    "bot_token": "YOUR_BOT_TOKEN",
-    "chat_id": "YOUR_CHAT_ID",
-    "low_level_threshold": 20
+    "threshold_pct": 20,
+    "cooldown_s": 3600
   },
   "web": {
     "host": "0.0.0.0",
